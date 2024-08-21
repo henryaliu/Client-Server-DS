@@ -1,22 +1,27 @@
 package lamport;
 
+import static java.lang.Math.max;
+
 public class LamportClockImpl implements LamportClock {
 
-    public LamportClockImpl() {
+    // time of the local LamportClock instance
+    private int time;
+
+    public int processEvent(int receivedTime) {
+        // Accept the greater of the two times received
+        this.time = max(time, receivedTime);
+        return this.time;
     }
 
-    @Override
-    public int processEvent(Message message) {
-        return 0;
+//    public int sendEvent(String message) {
+//    }
+
+    public void updateTime() {
+        this.time++;
     }
 
-    @Override
-    public int processEvent() {
-        return 0;
-    }
-
-    @Override
     public int getTime() {
-        return 0;
+        return this.time;
     }
+
 }

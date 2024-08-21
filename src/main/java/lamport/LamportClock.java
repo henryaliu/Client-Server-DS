@@ -2,21 +2,15 @@ package lamport;
 
 public interface LamportClock {
 
-    /*
-     * @param message: message received
-     * @return current value in Lamport Clock
-     */
-    public int processEvent(Message message);
+    // Process the tie break given a received timestamp from another entity
+    int processEvent(int receivedClock);
 
-    /*
-     * Updates internal clock for events excluding receive
-     * @return current value in Lamport Clock
-     */
-    public int processEvent();
+    // Sends the time/order of the Lamport Clock
+//    public int sendEvent(String message) throws Exception;
 
-    /*
-     * Gets the current time in Lamport Clock
-     * @return current value in Lamport Clock
-     */
-    public int getTime();
+    void updateTime() throws Exception;
+
+    // Get current time of the Lamport Clock
+    int getTime();
+
 }
