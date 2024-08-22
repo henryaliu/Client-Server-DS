@@ -1,8 +1,15 @@
 import lamport.LamportClock;
 import lamport.LamportClockImpl;
 
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.Scanner;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.lang.StringBuilder;
 
 public class ContentServerImpl implements ContentServer {
     private LamportClock clock;
@@ -34,14 +41,12 @@ public class ContentServerImpl implements ContentServer {
         this.port = Integer.parseInt(portInput[1]);
 
         // parsing process for entry file location
-        System.out.println("Enter location of the entry file: ");
-        String param2 = scanner.nextLine();
-
-
+        System.out.println("Enter location of the entry file ('filename.txt'): ");
+        this.fileLocation = scanner.nextLine();
     }
 
     public HashMap<String, String> parseToJSON() {
-
+        // parse from text to JSON
 
 
         return fileData;
@@ -51,6 +56,7 @@ public class ContentServerImpl implements ContentServer {
 
     }
 
+    // for testing
     public static void main(String[] args) {
         ContentServerImpl c = new ContentServerImpl();
         c.getParameters();
