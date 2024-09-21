@@ -1,3 +1,4 @@
+import java.io.IOException;
 import java.util.HashMap;
 
 public interface ContentServer {
@@ -6,9 +7,11 @@ public interface ContentServer {
     // (serverName, port), fileLocation
     void getParameters() throws Exception;
 
-    // retrieve the file, parse it to JSON
-    HashMap<String, String> parseToJSON();
+    // retrieve file, parse to JSON, send PUT request
+    void sendPUT(Integer port) throws IOException;
 
-    // send PUT request
-    void sendPUT(Integer port) throws Exception;
+    public static void main(String[] args) {
+        ContentServerImpl c = new ContentServerImpl();
+    }
+
 }
