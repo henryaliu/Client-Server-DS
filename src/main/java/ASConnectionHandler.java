@@ -5,10 +5,7 @@ import java.net.SocketTimeoutException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.HashMap;
-import java.util.Timer;
-import java.util.TimerTask;
-import java.util.Vector;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 // An employee of the AggregationServer
@@ -28,6 +25,9 @@ public class ASConnectionHandler extends Thread {
 
     // string1: key type, string2: who last updated it
     ConcurrentHashMap<String, String> whoUpdated = new ConcurrentHashMap<String, String>();
+
+    // To implement: task queue for PUT and GET operations in a sequential, ordered manner
+    public Queue<String> serverTaskQueue;
 
     public ASConnectionHandler(Socket s, String entityID) throws IOException {
         // Initialise socket
@@ -286,14 +286,6 @@ public class ASConnectionHandler extends Thread {
                     }
                     confirmer.flush();
                 }
-
-//                // check time elapsed since last message sent
-//                if ((System.currentTimeMillis() - timeStamp) >= 30000) {
-//                    // if 30s elapsed, end socket connection
-//                    System.out.println("30 seconds has elapsed since last message to AS, ending connection...");
-//                    alive = false;
-//                    return;
-//                }
             } catch (IOException ie) {
                 System.out.println(ie.getMessage());
             }

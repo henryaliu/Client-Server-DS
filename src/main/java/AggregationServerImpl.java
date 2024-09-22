@@ -76,26 +76,26 @@ public class AggregationServerImpl {
             String filepath = weatherFileName;
             Path path = Paths.get(filepath);
             if (Files.exists(path) && (Files.size(path) > 0)) {
-                reader = new BufferedReader(new FileReader(weatherFileName));
-                // store all feed and corresponding entries in HashMap
-                while ((currLine = reader.readLine()) != null && (!currLine.isEmpty())) {
-                    temp = currLine.split(":", 2);
-                    currentData.put(temp[0], temp[1]);
+//                reader = new BufferedReader(new FileReader(weatherFileName));
+//                // store all feed and corresponding entries in HashMap
+//                while (((currLine = reader.readLine()) != null) && (!currLine.isEmpty())) {
+//                    temp = currLine.split(":", 2);
+//                    currentData.put(temp[0], temp[1]);
+//                }
+                String content = Files.readString(path);
+                // split content by line
+                String[] lines = content.split(System.lineSeparator());
+                String[] lineContent;
+                for (int i = 0; i < lines.length; ++i) {
+                    lineContent = lines[i].split(":", 2);
+                    currentData.put(lineContent[0], lineContent[1]);
                 }
             } else {
                 System.out.println("Empty file, can't remove entries");
                 return;
             }
 
-            // sort through updatees and keep the entries last updated by stationID
-//            Vector<String> relevantEntryTypes = new Vector<String>();
-//            for (ConcurrentHashMap.Entry<String, String> curr_updatee : updatees.entrySet()) {
-//                if (curr_updatee.getValue().equals(stationID)) {
-//                    relevantEntryTypes.add(curr_updatee.getKey());
-//                }
-//            }
-
-            // for each type in relevantEntryTypes vector, search through the currentData HashMap and remove it
+            // for each updatee, remove it from the currentData hashmap
             for (ConcurrentHashMap.Entry<String, String> curr_updatee : updatees.entrySet()) {
                 currentData.remove(curr_updatee.getKey()); // remove type (and entry) from currentData
             }
@@ -145,6 +145,11 @@ public class AggregationServerImpl {
             Scanner scanner = new Scanner(System.in);
             String line = "";
             while (true) {
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException ie) {
+                    System.out.println(ie.getMessage());
+                }
                 line = scanner.nextLine();
                 if ((line != null) && (line.equals("END"))) {
                     try {
