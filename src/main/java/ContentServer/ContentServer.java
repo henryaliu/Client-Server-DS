@@ -1,28 +1,27 @@
+package ContentServer;
+
+import JSONParser.JSONParser;
 import lamport.LamportClock;
-import lamport.LamportClockImpl;
 
 import java.io.*;
+import java.lang.management.ManagementFactory;
 import java.net.Socket;
-import java.net.UnknownHostException;
-import java.nio.Buffer;
+import java.net.SocketException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Scanner;
-import java.lang.StringBuilder;
 
 import java.util.UUID;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 
-public class ContentServerImpl implements ContentServer {
+public class ContentServer {
 
     // globally number each CS
     private final String stationID;
 
     private final LamportClock clock;
 
-    public String serverName;
-    public Integer port;
+    private String serverName;
+    private Integer port;
 
     public String inputFileLoc;
     public String outputFileLoc;
@@ -33,8 +32,6 @@ public class ContentServerImpl implements ContentServer {
 
     private BufferedReader input;
     private PrintWriter output;
-
-    Logger logger = Logger.getLogger(ContentServerImpl.class.getName());
 
     public void getParameters() {
         Scanner scanner = new Scanner(System.in);
@@ -56,18 +53,19 @@ public class ContentServerImpl implements ContentServer {
         this.inputFileLoc = scanner.nextLine();
     }
 
-    public ContentServerImpl() {
-        this.stationID = UUID.randomUUID().toString(); // set ID of this server to newest
+    public ContentServer() {
+        // give server unique ID based on the terminal info
+        this.stationID = ManagementFactory.getRuntimeMXBean().getName().split("@")[0];
 
-        clock = new LamportClockImpl();
+        clock = new LamportClock();
         fileData = new HashMap<String, String>();
 
         // Get server name, port and file entry
         getParameters();
-        // Establish a connection to the AggregationServer
+        // Establish a connection to the AggregationServer.AggregationServer
         try {
-            csSocket = new Socket(serverName, Integer.valueOf(port)); // send socket
-            System.out.println("Content server " + this.stationID + ": Attempting to connect to the AS...");
+            csSocket = new Socket(serverName, port); // send socket
+            System.out.println("Content server " + this.stationID + ": Connected to the weather server!");
 
             PrintWriter out = new PrintWriter(csSocket.getOutputStream(), true);
             out.print("CS" + this.stationID + "\n"); // send "stationID" to AS
@@ -86,11 +84,11 @@ public class ContentServerImpl implements ContentServer {
 
                 }
             }
-
+        } catch (SocketException se) {
+            System.out.println("Failed to connect to AS: " + se.getMessage());
         } catch (IOException ie) {
-            throw new RuntimeException(ie);
+            System.out.println("Failed to send inform");
         }
-
     }
 
     public void sendPUT(Integer port) {
@@ -108,13 +106,13 @@ public class ContentServerImpl implements ContentServer {
             throw new RuntimeException(ie);
         }
 
-        // parse to JSON using JSONParser
+        // parse to JSON using JSONParser.JSONParser
         JSONParser jp = new JSONParser();
         // Parse the file to new JSON file
-        jp.textToJSON(inputFileLoc, "weather.json");
+        jp.textToJSON(inputFileLoc, "ContentServer/weather.json");
 
         // Send the HTTPS PUT message containing the JSON data to the AS
-        String PUT = "PUT /weather.json HTTP/1.1" + "\n"; // first line, doesn't change
+        String PUT = "PUT /ContentServer/weather.json HTTP/1.1" + "\n"; // first line, doesn't change
         PUT += "User-Agent: ATOMClient/1/0" + "\n";
         PUT += "Content-Type: ";
         for (int i = 0; i < contentTypes.size(); i++) {
@@ -127,13 +125,14 @@ public class ContentServerImpl implements ContentServer {
         PUT += "Content-Length: " + contentTypes.size() + "\n" + "\n";
         try {
             // copy the JSON file over
-            BufferedReader reader = new BufferedReader(new FileReader("weather.json"));
+            BufferedReader reader = new BufferedReader(new FileReader("ContentServer/weather.json"));
             String temp;
             while ((temp = reader.readLine()) != null) {
                 PUT += (temp + "\n");
             }
         } catch (IOException ie) {
-            throw new RuntimeException(ie);
+            System.out.println("Error - Failed to read JSON file into the PUT message: " + ie.getMessage());
+            return;
         }
 
         // send the PUT message
@@ -142,7 +141,7 @@ public class ContentServerImpl implements ContentServer {
             output.println(PUT);
             output.flush();
         } catch (IOException ie) {
-            System.out.println("Failed to send PUT message to AS");
+            System.out.println("Failed to send PUT message to Aggregation Server: " + ie.getMessage());
         }
 
         // Check for confirmation (thumbs up) from AS
@@ -167,7 +166,7 @@ public class ContentServerImpl implements ContentServer {
                         System.out.println("200 - Request successful" + "\n");
                         return;
                     } else {
-                        // else wait until some response is received on the status of the PUT
+                        // ignore other messages
                     }
                 }
             } catch (IOException ie) {
@@ -176,6 +175,10 @@ public class ContentServerImpl implements ContentServer {
 
         }
 
+    }
+
+    public static void main(String[] args) {
+        ContentServer cs = new ContentServer();
     }
 
 }

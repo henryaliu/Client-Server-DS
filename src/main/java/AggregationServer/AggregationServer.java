@@ -1,13 +1,10 @@
+package AggregationServer;
+
 import lamport.LamportClock;
-import lamport.LamportClockImpl;
+
 import java.io.*;
-import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.nio.channels.SelectionKey;
-import java.nio.channels.Selector;
-import java.nio.channels.ServerSocketChannel;
-import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -22,7 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 // Fault tolerance: eager release consistency when restoring state, ensures sync before starting up again
 
-public class AggregationServerImpl {
+public class AggregationServer {
     private final LamportClock clock;
 
     private Queue<String> requestQueue;
@@ -37,7 +34,7 @@ public class AggregationServerImpl {
     // Vector to keep track of all threads (string = ID)
     private ConcurrentHashMap<String, ASConnectionHandler> socketThreads = new ConcurrentHashMap<String, ASConnectionHandler>();
 
-    private final String weatherFileName = "SERVER_DATA.txt";
+    private final String weatherFileName = "AggregationServer/SERVER_DATA.txt";
 
     public void getPort() {
         Scanner scanner = new Scanner(System.in);
@@ -53,8 +50,8 @@ public class AggregationServerImpl {
     }
 
     // Methods
-    public AggregationServerImpl() {
-        clock = new LamportClockImpl();
+    public AggregationServer() {
+        clock = new LamportClock();
         getPort();
         try {
             ass = new ServerSocket(Integer.parseInt(this.port));
@@ -73,15 +70,9 @@ public class AggregationServerImpl {
         String[] temp;
         try {
             // Check if file empty
-            String filepath = weatherFileName;
-            Path path = Paths.get(filepath);
+            Path path = Paths.get(weatherFileName);
             if (Files.exists(path) && (Files.size(path) > 0)) {
-//                reader = new BufferedReader(new FileReader(weatherFileName));
-//                // store all feed and corresponding entries in HashMap
-//                while (((currLine = reader.readLine()) != null) && (!currLine.isEmpty())) {
-//                    temp = currLine.split(":", 2);
-//                    currentData.put(temp[0], temp[1]);
-//                }
+                // Store entire file in one go
                 String content = Files.readString(path);
                 // split content by line
                 String[] lines = content.split(System.lineSeparator());
@@ -91,7 +82,7 @@ public class AggregationServerImpl {
                     currentData.put(lineContent[0], lineContent[1]);
                 }
             } else {
-                System.out.println("Empty file, can't remove entries");
+//                System.out.println("Empty file, can't remove entries");
                 return;
             }
 
@@ -125,11 +116,11 @@ public class AggregationServerImpl {
                 }
                 if (!(socketThreads.isEmpty())) {
                     for (ConcurrentHashMap.Entry<String, ASConnectionHandler> curr_thread : socketThreads.entrySet()) {
-                        // check for dead threads
+                        // check for threads that haven't communicated
                         if (!(curr_thread.getValue().isConnected())) { // if thread not alive
                             removeEntries(curr_thread.getKey(), curr_thread.getValue().getUpdatees()); // remove entries uploaded by the entity
-                            socketThreads.remove(curr_thread.getKey()); // remove thread from threads HashMap
-                            System.out.println(curr_thread.getKey() + " deleted.");
+                            //socketThreads.remove(curr_thread.getKey()); // remove thread from threads HashMap
+                            System.out.println("Content from " + curr_thread.getKey() + " was deleted.");
                         }
                     }
                 }
@@ -195,20 +186,15 @@ public class AggregationServerImpl {
         }
     }
 
+    public static void main(String[] args) {
+        AggregationServer aggr = new AggregationServer();
+        try {
+            aggr.beginOperation();
+        } catch (IOException ie) {
+            System.out.println("Error - failed to start the server: " + ie.getMessage());
+        }
 
-
-
-    public void processGETRequest() {
     }
 
-    public void processPUTRequest() {
-    }
-
-    public boolean restorePreviousState() {
-        return false;
-    }
-
-    public void discardJSON() {
-    }
 }
 

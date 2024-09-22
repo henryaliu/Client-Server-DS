@@ -1,14 +1,15 @@
+package AggregationServer;
+
 import java.io.*;
 import java.net.Socket;
-import java.net.SocketException;
-import java.net.SocketTimeoutException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import JSONParser.JSONParser;
 
-// An employee of the AggregationServer
+// An employee of the AggregationServer.AggregationServer
 // Manages the operations of the threads
 public class ASConnectionHandler extends Thread {
 
@@ -21,7 +22,7 @@ public class ASConnectionHandler extends Thread {
 
     private long timeStamp;
 
-    private final String weatherFileName = "SERVER_DATA.txt";
+    private final String weatherFileName = "AggregationServer/SERVER_DATA.txt";
 
     // string1: key type, string2: who last updated it
     ConcurrentHashMap<String, String> whoUpdated = new ConcurrentHashMap<String, String>();
@@ -172,12 +173,12 @@ public class ASConnectionHandler extends Thread {
                 return "500";
             }
 
-            // next line, we expect JSON content, check the content is coherent
+            // Get format HashMap from JSONParser to check validity later
             JSONParser jp = new JSONParser();
             ConcurrentHashMap<String, String> types = jp.getFeedTypes();
             String[] temp;
 
-            // read each line but stop before } bracket
+            // check the JSON in the PUT message for coherence
             int i = 0;
             while (i < numEntries) {
                 firstLine = reader.readLine();
@@ -230,7 +231,19 @@ public class ASConnectionHandler extends Thread {
 
         } else if (lineBreakUp[0].equals("GET")) {
             type = "GET";
-
+            String text = "";
+            String JSON = "";
+            // store SERVER_DATA.txt as JSON string
+            Path path = Paths.get(weatherFileName);
+            if (Files.exists(path) && (Files.size(path) > 0)) {
+                JSONParser jp = new JSONParser();
+                JSON = jp.stringToJSON(Files.readString(path));
+            } else {
+                // file doesn't exist
+                return "EMPTY_GET";
+            }
+            // send JSON string to JAVA
+            return JSON;
         } else {
             // else no request was sent yet, loop again
         }
@@ -243,9 +256,10 @@ public class ASConnectionHandler extends Thread {
                 // check time elapsed since last message sent
                 if ((System.currentTimeMillis() - timeStamp) >= 30000) {
                     // if 30s elapsed, assume connection ended -> discard JSON and formally end socket connection
-                    System.out.println("Discarding JSON and ending connection for " + entID);
+                    System.out.println("Discarding JSON that was last updated by " + entID);
                     alive = false;
-                    return;
+                    timeStamp = System.currentTimeMillis();
+                    alive = true;
                 }
             }
         });
@@ -281,8 +295,12 @@ public class ASConnectionHandler extends Thread {
                         confirmer.print("201\n");
                     } else if (request.equals("200")) {
                         confirmer.print("200\n");
+                    } else if (request.equals("EMPTY_GET")) {
+                        confirmer.print("EMPTY_GET");
                     } else {
-
+                        // else, it is likely a GET request and request = weather data, so send it.
+                        confirmer.print(request);
+                        confirmer.flush();
                     }
                     confirmer.flush();
                 }

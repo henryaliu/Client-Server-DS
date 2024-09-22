@@ -1,5 +1,6 @@
+package JSONParser;
+
 import java.io.*;
-import java.nio.Buffer;
 import java.util.HashMap;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -193,7 +194,7 @@ public class JSONParser {
         }
     }
 
-    // convert JSON to text but instead the input is a string
+    // convert JSON to text but instead the input is a string and output is string
     public String JSONtoString(String JSON) {
         // assumes JSON is multi-line string
         if (JSON.isEmpty()) {
@@ -214,6 +215,38 @@ public class JSONParser {
             data += (l[0] + ":" + l[1] + "\n");
         }
         return data;
+    }
+
+    public String stringToJSON(String string) {
+        // assumes string is multi-line string
+        if (string.isEmpty()) {
+            System.out.println("Error: Invalid or empty text data." + "\n");
+            return "";
+        }
+        String JSON = "{" + "\n";
+        String[] lines = string.split(System.lineSeparator());
+        String[] l;
+        for (int i = 0; i < lines.length; ++i) {
+            l = lines[i].split(":", 2);
+            JSON += ("    ");
+            JSON += ("\"" + l[0] + "\"" + " : ");
+            if (!isNumber(l[1])) {
+                // if not number, add quotation marks
+                JSON += ("\"" + l[1] + "\"");
+            } else {
+                // else if number, dont add quotation marks
+                JSON += (l[1]);
+            }
+
+            // if not end of line, add comma
+            if (i != (lines.length - 1)) {
+                JSON += (",");
+            }
+            JSON += ("\n");
+        }
+        // add closing bracket
+        JSON += ("}");
+        return JSON;
     }
 
     // For testing this class
