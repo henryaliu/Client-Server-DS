@@ -10,7 +10,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import JSONParser.JSONParser;
 
 // An employee of the AggregationServer.AggregationServer
-// Manages the operations of the threads
+// This class handles the backend, ie writing to the weather file
 public class ASConnectionHandler extends Thread {
 
     private Socket receivedSocket;
@@ -21,6 +21,9 @@ public class ASConnectionHandler extends Thread {
     private boolean alive;
 
     private long timeStamp;
+
+    private BufferedReader requestInput;
+    private PrintWriter requestOutput;
 
     private final String weatherFileName = "AggregationServer/SERVER_DATA.txt";
 
@@ -228,7 +231,7 @@ public class ASConnectionHandler extends Thread {
                 writer.flush();
                 return "201"; // return status 201
             }
-
+        // END OF PUT CODE
         } else if (lineBreakUp[0].equals("GET")) {
             type = "GET";
             String text = "";
@@ -300,7 +303,6 @@ public class ASConnectionHandler extends Thread {
                     } else {
                         // else, it is likely a GET request and request = weather data, so send it.
                         confirmer.print(request);
-                        confirmer.flush();
                     }
                     confirmer.flush();
                 }
@@ -308,9 +310,6 @@ public class ASConnectionHandler extends Thread {
                 System.out.println(ie.getMessage());
             }
         }
-
-
-
     }
 }
 

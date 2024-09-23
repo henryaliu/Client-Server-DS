@@ -7,6 +7,9 @@ import java.io.*;
 import java.lang.management.ManagementFactory;
 import java.net.Socket;
 import java.net.SocketException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Scanner;
@@ -68,7 +71,7 @@ public class ContentServer {
             System.out.println("Content server " + this.stationID + ": Connected to the weather server!");
 
             PrintWriter out = new PrintWriter(csSocket.getOutputStream(), true);
-            out.print("CS" + this.stationID + "\n"); // send "stationID" to AS
+            out.println("CS" + this.stationID); // send "stationID" to AS
             out.flush();
 
             Scanner scanner = new Scanner(System.in); // scan terminal for user PUT requests
@@ -110,38 +113,36 @@ public class ContentServer {
         JSONParser jp = new JSONParser();
         // Parse the file to new JSON file
         jp.textToJSON(inputFileLoc, "ContentServer/weather.json");
-
-        // Send the HTTPS PUT message containing the JSON data to the AS
-        String PUT = "PUT /ContentServer/weather.json HTTP/1.1" + "\n"; // first line, doesn't change
-        PUT += "User-Agent: ATOMClient/1/0" + "\n";
-        PUT += "Content-Type: ";
-        for (int i = 0; i < contentTypes.size(); i++) {
-            PUT += contentTypes.get(i);
-            if (i != (contentTypes.size() - 1)) {
-                PUT += ", ";
-            }
-        }
-        PUT += "\n";
-        PUT += "Content-Length: " + contentTypes.size() + "\n" + "\n";
+        Path path = Paths.get("ContentServer/weather.json");
+        String PUT = "";
         try {
-            // copy the JSON file over
-            BufferedReader reader = new BufferedReader(new FileReader("ContentServer/weather.json"));
-            String temp;
-            while ((temp = reader.readLine()) != null) {
-                PUT += (temp + "\n");
+            if (Files.exists(path) && (Files.size(path) > 0)) {
+                long length = ((Files.lines(Paths.get(path.toUri())).count()));
+                // Send the HTTPS PUT message containing the JSON data to the AS
+                PUT = "PUT /ContentServer/weather.json HTTP/1.1" + "\n"; // first line, doesn't change
+                PUT += "User-Agent: ATOMClient/1/0" + "\n";
+                PUT += "Content-Type: weather/json" + "\n"; // stationID
+                PUT += "Content-Length: " + length + "\n" + " " + "\n";
+                // copy the JSON file over
+                PUT += (Files.readString(path));
+            } else {
+                // file doesn't exist
+                System.out.println("Error - Failed to read JSON file into the PUT message: ");
+                return;
             }
         } catch (IOException ie) {
-            System.out.println("Error - Failed to read JSON file into the PUT message: " + ie.getMessage());
+            System.out.println("Couldn't read local JSON file: " + ie.getMessage());
             return;
         }
 
         // send the PUT message
         try {
             output = new PrintWriter(csSocket.getOutputStream(), true);
-            output.println(PUT);
+            output.println(PUT + "\n");
             output.flush();
         } catch (IOException ie) {
             System.out.println("Failed to send PUT message to Aggregation Server: " + ie.getMessage());
+            return;
         }
 
         // Check for confirmation (thumbs up) from AS
@@ -171,10 +172,9 @@ public class ContentServer {
                 }
             } catch (IOException ie) {
                 System.out.println("Failure to receive status: " + ie.getMessage());
+                return;
             }
-
         }
-
     }
 
     public static void main(String[] args) {

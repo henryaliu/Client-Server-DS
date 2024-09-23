@@ -56,13 +56,13 @@ public class GETClient {
         // GET /AggregationServer/SERVER_DATA.txt HTTP/1.1
         // Host: AS_URL
         // User-Agent: ATOMClient/1/0
-        // Accept: weatherdata/json
+        // Accept: stationID/json
 
         // Create the GET message
         String GET = "GET /AggregationServer/SERVER_DATA.txt HTTP/1.1" + "\n";
         GET += "Host: " + this.AS_URL + "\n";
         GET += "User-Agent: ATOMClient/1/0" + "\n";
-        GET += "Accept: weatherdata/json" + "\n";
+        GET += "Accept: " + stationID + "/json" + "\n";
 
         // send the GET message
         try {
@@ -80,6 +80,11 @@ public class GETClient {
                 BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
                 String currLine = reader.readLine();
                 if ((currLine != null) && (!currLine.isEmpty())) {
+
+                    if (currLine.equals("204")) {
+                        System.out.println("Error: no request data was found");
+                        return;
+                    }
 
                     // check if we received EMPTY_GET status
                     if (currLine.equals("EMPTY_GET")) {
