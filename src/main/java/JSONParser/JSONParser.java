@@ -102,7 +102,7 @@ public class JSONParser {
 
                 pwriter.println("{");
             } catch (IOException ie) {
-                throw new RuntimeException(ie);
+                System.out.println("Failure to read file: " + ie.getMessage());
             }
 
             br = new BufferedReader(new FileReader(inputName));
@@ -190,7 +190,7 @@ public class JSONParser {
             pw.close();
             return;
         } catch (IOException ie) {
-            throw new RuntimeException(ie);
+            System.out.println("Failed to read file: " + ie.getMessage());
         }
     }
 

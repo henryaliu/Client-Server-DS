@@ -1,10 +1,16 @@
 package lamport;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static java.lang.Math.max;
 
 public class LamportClock {
 
-    private int time;
+    private volatile AtomicInteger time; // for multi-threading access
+
+    public LamportClock() {
+        this.time = new AtomicInteger(0);
+    }
 
     // Process the tie break given a received timestamp from another entity
     public int processEvent(int receivedTime) {
@@ -12,8 +18,6 @@ public class LamportClock {
         this.time = max(time, receivedTime);
         return this.time;
     }
-    // Sends the time/order of the Lamport Clock
-//    public int sendEvent(String message) throws Exception;
 
     void updateTime() {
         this.time++;

@@ -79,8 +79,7 @@ public class GETClient {
             try {
                 BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
                 String currLine = reader.readLine();
-                if ((currLine != null) && (!currLine.isEmpty())) {
-
+                if ((currLine != null) && !(currLine.isEmpty())) {
                     if (currLine.equals("204")) {
                         System.out.println("Error: no request data was found");
                         return;
@@ -96,15 +95,23 @@ public class GETClient {
                     JSON += (currLine + "\n"); // append the first line which was already read
 
                     // read the rest of the data
-                    while ((currLine = reader.readLine()) != null) {
+                    while (!(currLine = reader.readLine()).equals("}")) {
                         JSON += (currLine + "\n");
                     }
+                    JSON += "}";
+
+                    System.out.println(JSON);
+
                     // convert the JSON string to regular entry file format string
                     JSONParser jp = new JSONParser();
-                    receivedData = jp.JSONtoString(JSON);
+                    String[] receivedData = jp.JSONtoString(JSON).split(System.lineSeparator());
                     // display (already one line at a time)
+                    System.out.println("********************************");
                     System.out.println("Weather data has been received: ");
-                    System.out.println(receivedData);
+                    for (int i = 0; i < receivedData.length; ++i) {
+                        System.out.println("     " + receivedData[i]);
+                    }
+                    System.out.println("********************************");
                     return;
                 }
             } catch (IOException ie) {
@@ -142,7 +149,7 @@ public class GETClient {
                 }
             }
         } catch (IOException ie) {
-            System.out.println(ie.getMessage());
+            System.out.println("Failed to connect to Aggregation Server: " + ie.getMessage());
         }
     }
 

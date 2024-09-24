@@ -106,7 +106,7 @@ public class ContentServer {
                 contentTypes.add(lineWords[0]);
             }
         } catch (IOException ie) {
-            throw new RuntimeException(ie);
+            System.out.println("Failed to send PUT request: " + ie.getMessage());
         }
 
         // parse to JSON using JSONParser.JSONParser
