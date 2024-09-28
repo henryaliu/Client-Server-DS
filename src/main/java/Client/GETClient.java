@@ -1,27 +1,30 @@
 package Client;
 
 import JSONParser.JSONParser;
+import lamport.LamportClock;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
+import java.io.*;
 import java.lang.management.ManagementFactory;
 import java.net.Socket;
 import java.net.UnknownHostException;
 import java.util.Scanner;
 
-public class GETClient {
+public class GETClient implements Serializable {
+    // Provides a common serialisation ID across all servers/entities
+    @Serial
+    private static final long serialVersionUID = 4567L;
+
+    private LamportClock clock; // local time clock
 
     private String AS_URL;
     private String serverName;
     private Integer port;
     private String stationID; // data from the AS will be from last updated by this stationID
 
-    private Socket clientSocket;
+    private ObjectOutputStream output;
+    private ObjectInputStream input;
 
-    private BufferedReader input;
-    private PrintWriter output;
+    private Socket clientSocket;
 
     private String JSON;
     private String receivedData;
@@ -49,6 +52,7 @@ public class GETClient {
         if (this.stationID.isEmpty()) {
             this.stationID = "all";
         }
+        clock.updateTime(); // *** state change: port and server info received
     }
 
     public void sendGET(Integer port) {
@@ -66,56 +70,51 @@ public class GETClient {
 
         // send the GET message
         try {
-            output = new PrintWriter(clientSocket.getOutputStream(), true);
-            output.println(GET);
+            output.writeObject(GET);
             output.flush();
+            clock.updateTime(); // Update after message sent to aggregation server
         } catch (IOException ie) {
             System.out.println("Failed to send GET message to Aggregation Server: " + ie.getMessage());
+            clock.updateTime(); // Update clock after exception caught
             return;
         }
 
         // Wait to receive the requested data (JSON string) from the AS
         while (true) {
             try {
-                BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-                String currLine = reader.readLine();
-                if ((currLine != null) && !(currLine.isEmpty())) {
-                    if (currLine.equals("204")) {
+                JSON = (String) input.readObject();
+                String[] lines = JSON.split(System.lineSeparator());
+                if ((lines[0] != null) && !(JSON.isEmpty())) {
+                    if (lines[0].equals("204") || JSON.equals("204")) {
                         System.out.println("Error: no request data was found");
+                        return;
+                    }
+                    if (lines[0].equals("400") || JSON.equals("400")) {
+                        System.out.println("Error: This request was not recognised");
                         return;
                     }
 
                     // check if we received EMPTY_GET status
-                    if (currLine.equals("EMPTY_GET")) {
+                    if (lines[0].equals("EMPTY_GET") || JSON.equals("EMPTY_GET")) {
                         System.out.println("Error: The server's weather file is empty");
                         return;
                     }
-
-                    JSON = ""; // ensure JSON string is empty at first
-                    JSON += (currLine + "\n"); // append the first line which was already read
-
-                    // read the rest of the data
-                    while (!(currLine = reader.readLine()).equals("}")) {
-                        JSON += (currLine + "\n");
-                    }
-                    JSON += "}";
-
-                    System.out.println(JSON);
 
                     // convert the JSON string to regular entry file format string
                     JSONParser jp = new JSONParser();
                     String[] receivedData = jp.JSONtoString(JSON).split(System.lineSeparator());
                     // display (already one line at a time)
                     System.out.println("********************************");
-                    System.out.println("Weather data has been received: ");
+                    System.out.println("Weather data (uploaded by Content Server " + stationID + "): ");
                     for (int i = 0; i < receivedData.length; ++i) {
                         System.out.println("     " + receivedData[i]);
                     }
                     System.out.println("********************************");
+                    clock.updateTime(); // *** data is fully received and printed
                     return;
                 }
-            } catch (IOException ie) {
-                System.out.println("Failed to read data from Aggregation Server: " + ie.getMessage());
+            } catch (IOException | ClassNotFoundException e) {
+                System.out.println("Failed to read data from Aggregation Server: " + e.getMessage());
                 return;
             }
         }
@@ -131,9 +130,11 @@ public class GETClient {
                 System.out.println("GETClient (reading from Content Server " + this.stationID + "): Connected to the weather server!");
             }
 
-            PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true);
-            out.print("GETClient (" + this.stationID + ")\n"); // send "stationID" to AS
-            out.flush();
+            output = new ObjectOutputStream(clientSocket.getOutputStream());
+            input = new ObjectInputStream(clientSocket.getInputStream());
+            output.writeObject("GETClient" + this.stationID); // send "stationID" to AS
+            output.flush();
+            clock.updateTime(); // *** sockets instantiated, clock is updated
 
             Scanner scanner = new Scanner(System.in); // scan terminal for user PUT requests
             String currLine = "";

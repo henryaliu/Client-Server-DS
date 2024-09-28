@@ -16,12 +16,18 @@ import java.util.Scanner;
 
 import java.util.UUID;
 
-public class ContentServer {
+public class ContentServer implements Serializable {
+    // Provides a common serialisation ID across all servers/entities
+    @Serial
+    private static final long serialVersionUID = 4567L;
 
     // globally number each CS
     private final String stationID;
 
     private final LamportClock clock;
+
+    private ObjectOutputStream outstream;
+    private ObjectInputStream reader;
 
     private String serverName;
     private Integer port;
@@ -32,9 +38,6 @@ public class ContentServer {
 
     private Socket csSocket;
     private JSONParser parser;
-
-    private BufferedReader input;
-    private PrintWriter output;
 
     public void getParameters() {
         Scanner scanner = new Scanner(System.in);
@@ -70,9 +73,10 @@ public class ContentServer {
             csSocket = new Socket(serverName, port); // send socket
             System.out.println("Content server " + this.stationID + ": Connected to the weather server!");
 
-            PrintWriter out = new PrintWriter(csSocket.getOutputStream(), true);
-            out.println("CS" + this.stationID); // send "stationID" to AS
-            out.flush();
+            outstream = new ObjectOutputStream(csSocket.getOutputStream());
+            reader = new ObjectInputStream(csSocket.getInputStream()); // initialise inputstream as well here
+            outstream.writeObject("CS" + this.stationID); // send "stationID" to AS
+            outstream.flush();
 
             Scanner scanner = new Scanner(System.in); // scan terminal for user PUT requests
             String currLine = "";
@@ -81,10 +85,12 @@ public class ContentServer {
                 if (currLine.equals("PUT")) {
                     sendPUT(port);
                 } else if (currLine.equals("END")) {
+                    csSocket.shutdownInput();
+                    csSocket.shutdownOutput();
                     csSocket.close();
                     return;
                 } else {
-
+                    continue;
                 }
             }
         } catch (SocketException se) {
@@ -107,6 +113,7 @@ public class ContentServer {
             }
         } catch (IOException ie) {
             System.out.println("Failed to send PUT request: " + ie.getMessage());
+            return;
         }
 
         // parse to JSON using JSONParser.JSONParser
@@ -137,20 +144,18 @@ public class ContentServer {
 
         // send the PUT message
         try {
-            output = new PrintWriter(csSocket.getOutputStream(), true);
-            output.println(PUT + "\n");
-            output.flush();
+            outstream.writeObject(PUT);
+            outstream.flush();
         } catch (IOException ie) {
             System.out.println("Failed to send PUT message to Aggregation Server: " + ie.getMessage());
             return;
         }
 
         // Check for confirmation (thumbs up) from AS
+        String status = "";
         while (true) {
             try {
-                BufferedReader reader = new BufferedReader(new InputStreamReader(csSocket.getInputStream()));
-                String status = reader.readLine();
-                if (status != null && !(status.isEmpty())) {
+                if (((status = (String) reader.readObject()) != null) && !(status.isEmpty())) {
                     if (status.equals("500")) {
                         System.out.println("500 - Internal server error" + "\n");
                         return; // unsuccessful put, so return
@@ -168,11 +173,17 @@ public class ContentServer {
                         return;
                     } else {
                         // ignore other messages
+                        System.out.println("Unidentifiable response from the aggregation server");
+                        return;
                     }
                 }
-            } catch (IOException ie) {
-                System.out.println("Failure to receive status: " + ie.getMessage());
-                return;
+            } catch (IOException | ClassNotFoundException e) {
+                if (e.getMessage().equals("invalid type code: AC")) { // if error suggests the stream is empty
+                    System.out.println(e.getMessage());
+                    continue;
+                } else {
+                    return;
+                }
             }
         }
     }

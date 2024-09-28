@@ -12,9 +12,7 @@ import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.stream.Collectors;
 
 // Isolation: No request can see one another, it only knows the AS
 // Consistency: Data will be universal
@@ -24,7 +22,11 @@ import java.util.stream.Collectors;
 
 // Fault tolerance: eager release consistency when restoring state, ensures sync before starting up again
 
-public class AggregationServer {
+public class AggregationServer implements Serializable {
+    // Provides a common serialisation ID across all servers/entities
+    @Serial
+    private static final long serialVersionUID = 4567L;
+
     private final String weatherFileName = "AggregationServer/SERVER_DATA.txt";
     private final LamportClock clock;
     private String port;
@@ -35,6 +37,8 @@ public class AggregationServer {
 
     // String = socket identity, Socket = reference socket
     private volatile ConcurrentHashMap<String, Socket> socketThreads = new ConcurrentHashMap<String, Socket>();
+
+    private volatile ConcurrentHashMap<Socket, ArrayList<ObjectStreamConstants>> streams = new ConcurrentHashMap<>();
 
     // String = request data, Socket = reference socket
     private volatile BlockingQueue<ConcurrentHashMap.Entry<String, Socket>> requestQueue = new LinkedBlockingQueue<ConcurrentHashMap.Entry<String, Socket>>();
@@ -84,6 +88,10 @@ public class AggregationServer {
                 line = scanner.nextLine();
                 if ((line != null) && (line.equals("END"))) {
                     try {
+                        // close all sockets
+                        for (ConcurrentHashMap.Entry<String, Socket> threads : socketThreads.entrySet()) {
+                            threads.getValue().close();
+                        }
                         ass.close();
                         return;
                     } catch (IOException ie) {
@@ -101,19 +109,42 @@ public class AggregationServer {
             // loop to constantly accept any new connections
             while (true) {
                 Socket sc;
-                try {
-                    if ((sc = ass.accept()) != null) {
-                        // get the type and ID of the entity on other end of socket
-                        BufferedReader identifier = new BufferedReader(new InputStreamReader(sc.getInputStream()));
-                        String identity = identifier.readLine(); // stationID
-                        stationIDs.add(identity); // add to records of stationIDs
+                if (!ass.isClosed()) {
+                    try {
+                        if ((sc = ass.accept()) != null) {
+                            // get the type and ID of the entity on other end of socket
+                            ObjectOutputStream out = new ObjectOutputStream(sc.getOutputStream()); // declare output stream first to avoid bugs
+                            ObjectInputStream in = new ObjectInputStream(sc.getInputStream());
+                            String identity = "";
+                            try {
+                                identity = (String) in.readObject();
+                            } catch (ClassNotFoundException cnfe) {
+                                System.out.println("Connection attempt denied: failed to read input stream from socket (" + cnfe.getMessage() + ")");
+                                continue;
+                            }
 
-                        socketThreads.put(identity, sc);
-                        System.out.println("Connection established for " + identity + "\n");
-                        listenForRequests(sc, identity); // creates a new thread to listen for requests
+                            if (stationIDs.contains(identity)) {
+                                System.out.println("Connection attempt denied: an entity with this ID already exists!");
+                                continue;
+                            }
+
+                            stationIDs.add(identity); // add to records of stationIDs
+
+                            socketThreads.put(identity, sc);
+                            ArrayList<ObjectStreamConstants> objstreams = new ArrayList<>(); // array that stores output, and input streams
+                            objstreams.add(out);
+                            objstreams.add(in);
+                            streams.put(sc, objstreams);
+                            System.out.println("Connection established for " + identity + "\n");
+                            listenForRequests(sc, identity); // creates a new thread to listen for requests
+                        }
+                    } catch (IOException ie) {
+                        if (!ass.isClosed()) {
+                            System.out.println("Failed to accept incoming socket: " + ie.getMessage());
+                        }
                     }
-                } catch (IOException ie) {
-                    System.out.println("Failed to accept incoming socket: " + ie.getMessage());
+                } else {
+                    return;
                 }
             }
         });
@@ -121,51 +152,41 @@ public class AggregationServer {
         listen.start();
     }
 
-    // loop for each thread to listen for requests
+    // loop for each thread to listen for requests, checks if the request is a valid request
     public void listenForRequests(Socket socket, String identity) {
         Thread listenRequests = new Thread(() -> {
             // loop to check for any incoming requests from the socket
-            BufferedReader requestInput;
-            String request = "";
-            while (true) {
+            ArrayList<ObjectStreamConstants> objstreams = streams.get(socket);
+            String firstLine = "";
+            while ((!socket.isClosed()) && (objstreams.get(1) != null)) {
+                // objstreams.get(1) = ObjectInputStream for the socket
                 try {
-                    requestInput = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                    if (((request = requestInput.readLine()) != null) && (!request.isEmpty())) { // first line
-                        String[] firstLineWords = request.split(" ", 3);
+                    String wholeString = (String) ((ObjectInputStream) objstreams.get(1)).readObject();
+                    String[] requestLines = wholeString.split(System.lineSeparator());
+                    if ((firstLine = requestLines[0]) != null && (!firstLine.isEmpty())) {
+                        String[] firstLineWords = firstLine.split(" ", 3);
 
-                        // if we received a request, put request data in string, store in requestqueue
-                        String requestData = request + "\n";
-
-                        // read first four lines, get length from fourth line
-                        Integer numLines = 0;
-                        for (int i = 0; i < 4; ++i) {
-                            request = requestInput.readLine();
-                            requestData += (request + "\n");
-                            if ((i == 2) && (firstLineWords[0].equals("PUT"))) { // Content-Length
-                                String[] temp = request.split(":", 2);
-                                if (temp.length > 1) {
-                                    temp[1] = temp[1].trim();
-                                    numLines = Integer.parseInt(temp[1]);
-                                }
-                            }
+                        // take a peek at the first key to make sure its a valid request: PUT/GET
+                        if (!firstLineWords[0].equals("PUT") && !firstLineWords[0].equals("GET")) {
+                            System.out.println("A request was received but was invalid (Not a PUT/GET)");
+                            // send back status 400
+                            ((ObjectOutputStream) objstreams.getFirst()).writeObject("400");
+                            ((ObjectOutputStream) objstreams.getFirst()).flush();
+                            return;
                         }
-                        while (numLines > 0) {
-                            requestData += (requestInput.readLine() + "\n");
-                            numLines--;
-                        }
-                        // add stationID as first line of request data for convenience
-                        String copy = requestData;
-                        requestData = "";
-                        requestData += (identity + "\n" + copy);
-                        boolean uploaded = requestQueue.offer(new AbstractMap.SimpleEntry<>(requestData, socket)); // add data and socket to requestQueue
+                        // Add stationID to top of line
+                        wholeString = (identity + "\n" + wholeString);
+                        System.out.println(wholeString);
+                        boolean uploaded = requestQueue.offer(new AbstractMap.SimpleEntry<>(wholeString, socket)); // add data and socket to requestQueue
                         if (uploaded) {
                             System.out.println("Added new request to queue");
                         } else {
-                            System.out.println("Failed to add new request to queue");
+                            System.out.println("Error: something went wrong when adding a new request to the queue");
                         }
                     }
-                } catch (IOException ie) {
-                    System.out.println("Error reading request: " + ie.getMessage());
+                } catch (IOException | ClassNotFoundException e) {
+                    System.out.println("Error reading request: " + e.getMessage());
+                    return;
                 }
             }
         });
@@ -244,7 +265,7 @@ public class AggregationServer {
                 }
                 if (!requestQueue.isEmpty()) {
                     for (ConcurrentHashMap.Entry<String, Socket> curr_request : requestQueue) { // for each request in the queue
-                        // Get the stationID from the data
+                        // Get the stationID from the data by first splitting the string into an array of lines for convenience
                         String[] lines = curr_request.getKey().split(System.lineSeparator());
                         String stationID = lines[0]; // only for PUT
 
@@ -256,8 +277,9 @@ public class AggregationServer {
                                 requestData += ("\n");
                             }
                         }
+                        // execute the request
                         executeRequest(requestData, curr_request.getValue(), stationID);
-                        requestQueue.remove(); // remove request from queue
+                        requestQueue.remove(); // once executed, remove request from queue
                     }
                 }
             }
@@ -268,108 +290,106 @@ public class AggregationServer {
 
     // to execute the task (not a thread, to achieve blocking)
     public void executeRequest(String requestData, Socket referenceSocket, String ID) {
-        PrintWriter socketOutput;
-        try { // Check socket works
-            socketOutput = new PrintWriter(referenceSocket.getOutputStream(), true);
-        } catch (IOException ie) {
-            System.out.println("Error executing request - Couldn't get socket's output stream: " + ie.getMessage());
-            return;
-        }
-        if (requestData.isEmpty()) { // check that string isn't empty and socket isn't null
-            socketOutput.println("204");
-            socketOutput.flush();
-            return;
-        }
+        ArrayList<ObjectStreamConstants> objstreams = streams.get(referenceSocket);
+        try {
+            if (requestData.isEmpty()) { // check that string isn't empty and socket isn't null
+                ((ObjectOutputStream) objstreams.getFirst()).writeObject("204");
+                ((ObjectOutputStream) objstreams.getFirst()).flush();
+                return;
+            }
 
-        // see if its PUT or GET request, isolate the PUT data if its PUT
-        String[] requestLines = requestData.split("\r?\n");
-        String[] currLine = requestLines[0].split(" ", 3); // first line
-        if (currLine[0].equals("PUT")) {
-            executePUT(requestData, referenceSocket, ID); // execute put request
-            return;
-        } else if (currLine[0].equals("GET")) {
-            executeGET(requestData, referenceSocket, ID);
-            return;
-        } else {
-            System.out.println("Unidentifiable request - No action took place");
+            // see if its PUT or GET request, isolate the PUT data if its PUT
+            String[] requestLines = requestData.split("\\r?\\n");
+            String[] currLine = requestLines[0].split(" ", 3); // first line
+            if (currLine[0].equals("PUT")) {
+                executePUT(requestData, referenceSocket, ID); // execute put request
+                return;
+            } else if (currLine[0].equals("GET")) {
+                executeGET(requestData, referenceSocket, ID);
+                return;
+            } else {
+                System.out.println("Unidentifiable request - No action took place");
+                return;
+            }
+        } catch (IOException ie) {
+            System.out.println("Failed to read data from socket: " + ie.getMessage());
             return;
         }
     }
 
     public void executePUT(String requestData, Socket referenceSocket, String ID) {
-        PrintWriter socketOutput;
+        ArrayList<ObjectStreamConstants> objstreams = streams.get(referenceSocket);
         try { // Check socket works
-            socketOutput = new PrintWriter(referenceSocket.getOutputStream(), true);
+            ID = ID.replaceAll("CS", "");
+
+            String[] requestLines = requestData.split("\r?\n");
+            // skip straight to 6th line, on 1st line currently
+            if (requestLines.length > 5) { // extra check to avoid bounds error
+                if (!(requestLines[5].equals("{")) || !(requestLines[requestLines.length - 1].equals("}"))) { // check for { and }
+                    ((ObjectOutputStream) objstreams.getFirst()).writeObject("500");
+                    ((ObjectOutputStream) objstreams.getFirst()).flush();
+                    return;
+                }
+                JSONParser jp = new JSONParser();
+                ConcurrentHashMap<String, String> types = jp.getFeedTypes();
+                String[] lineElements; // [0] = type, [1] = data
+                String PUT_DATA = "";
+                ConcurrentHashMap<String, String> tempForUpdatees = new ConcurrentHashMap<String, String>();
+                for (int i = 6; i < requestLines.length - 1; ++i) { // check through each line for coherence except last (} line)
+                    // convert to regular text
+                    lineElements = requestLines[i].split(":", 2);
+                    lineElements[0] = lineElements[0].trim();
+                    lineElements[0] = lineElements[0].replace("\"", "");
+                    lineElements[1] = lineElements[1].trim();
+                    lineElements[1] = lineElements[1].replaceAll(",", "");
+                    lineElements[1] = lineElements[1].replaceAll("\"", "");
+
+                    if ((types.get(lineElements[0]) != null) && (types.get(lineElements[0]).equals("string")) && jp.isNumber(lineElements[1])) {
+                        // if type is string, but the value is int
+                        ((ObjectOutputStream) objstreams.getFirst()).writeObject("500");
+                        ((ObjectOutputStream) objstreams.getFirst()).flush();
+                        return;
+                    }
+                    if ((types.get(lineElements[0]) != null) && (types.get(lineElements[0]).equals("int")) && (!jp.isNumber(lineElements[1]))) {
+                        // if type is int, but the value is string
+                        ((ObjectOutputStream) objstreams.getFirst()).writeObject("500");
+                        ((ObjectOutputStream) objstreams.getFirst()).flush();
+                        return;
+                    }
+                    PUT_DATA += (lineElements[0] + ":" + lineElements[1] + "\n");
+                    lastUpdateTimes.put(lineElements[0], System.currentTimeMillis()); // also add the types and their timestamps
+                    tempForUpdatees.put(lineElements[0], ID);
+                }
+                Path path = Paths.get(weatherFileName);
+                try {
+                    if (Files.exists(path) && (Files.size(path) > 0)) {
+                        updateFile(PUT_DATA, ID); // JSON is valid, update the file with this data
+                        ((ObjectOutputStream) objstreams.getFirst()).writeObject("200");
+                        ((ObjectOutputStream) objstreams.getFirst()).flush();
+                        return;
+                    } else { // else create and print to new file, return 201
+                        System.out.println("No weather file yet - creating one now");
+                        PrintWriter writer = new PrintWriter(weatherFileName);
+                        writer.println(PUT_DATA);
+                        writer.flush();
+                        writer.close();
+
+                        whoUpdated.putAll(tempForUpdatees);
+                        ((ObjectOutputStream) objstreams.getFirst()).writeObject("201");
+                        ((ObjectOutputStream) objstreams.getFirst()).flush();
+                        return;
+                    }
+                } catch (IOException ie) {
+                    System.out.println("Error trying to reach server weather data: " + ie.getMessage());
+                    return;
+                }
+            } else {
+                ((ObjectOutputStream) objstreams.getFirst()).writeObject("204"); // empty JSON
+                ((ObjectOutputStream) objstreams.getFirst()).flush();
+                return;
+            }
         } catch (IOException ie) {
             System.out.println("Error executing request - Couldn't get socket's output stream: " + ie.getMessage());
-            return;
-        }
-        ID = ID.replaceAll("CS", "");
-
-        String[] requestLines = requestData.split("\r?\n");
-        // skip straight to 6th line, on 1st line currently
-        if (requestLines.length > 5) { // extra check to avoid bounds error
-            if (!(requestLines[5].equals("{")) || !(requestLines[requestLines.length - 1].equals("}"))) { // check for { and }
-                socketOutput.println("500");
-                socketOutput.flush();
-                return;
-            }
-            JSONParser jp = new JSONParser();
-            ConcurrentHashMap<String, String> types = jp.getFeedTypes();
-            String[] lineElements; // [0] = type, [1] = data
-            String PUT_DATA = "";
-            ConcurrentHashMap<String, String> tempForUpdatees = new ConcurrentHashMap<String, String>();
-            for (int i = 6; i < requestLines.length - 1; ++i) { // check through each line for coherence except last (} line)
-                // convert to regular text
-                lineElements = requestLines[i].split(":", 2);
-                lineElements[0] = lineElements[0].trim();
-                lineElements[0] = lineElements[0].replace("\"", "");
-                lineElements[1] = lineElements[1].trim();
-                lineElements[1] = lineElements[1].replaceAll(",", "");
-                lineElements[1] = lineElements[1].replaceAll("\"", "");
-
-                if ((types.get(lineElements[0]) != null) && (types.get(lineElements[0]).equals("string")) && jp.isNumber(lineElements[1])) {
-                    // if type is string, but the value is int
-                    socketOutput.println("500");
-                    socketOutput.flush();
-                    return;
-                }
-                if ((types.get(lineElements[0]) != null) && (types.get(lineElements[0]).equals("int")) && (!jp.isNumber(lineElements[1]))) {
-                    // if type is int, but the value is string
-                    socketOutput.println("500");
-                    socketOutput.flush();
-                    return;
-                }
-                PUT_DATA += (lineElements[0] + ":" + lineElements[1] + "\n");
-                lastUpdateTimes.put(lineElements[0], System.currentTimeMillis()); // also add the types and their timestamps
-                tempForUpdatees.put(lineElements[0], ID);
-            }
-            Path path = Paths.get(weatherFileName);
-            try {
-                if (Files.exists(path) && (Files.size(path) > 0)) {
-                    updateFile(PUT_DATA, ID); // JSON is valid, update the file with this data
-                    socketOutput.println("200");
-                    socketOutput.flush();
-                    return;
-                } else { // else create and print to new file, return 201
-                    System.out.println("No weather file yet - creating one now");
-                    PrintWriter writer = new PrintWriter(weatherFileName);
-                    writer.println(PUT_DATA);
-                    writer.flush();
-
-                    whoUpdated.putAll(tempForUpdatees);
-
-                    socketOutput.println("201");
-                    socketOutput.flush();
-                    return;
-                }
-            } catch (IOException ie) {
-                System.out.println("Error trying to reach server weather data: " + ie.getMessage());
-                return;
-            }
-        } else {
-            socketOutput.println("204"); // empty JSON
-            socketOutput.flush();
             return;
         }
     }
@@ -377,12 +397,12 @@ public class AggregationServer {
     // ID = GETClient ID NOT stationID
     public void executeGET(String requestData, Socket referenceSocket, String ID) {
         // Read text file
-        PrintWriter socketOutput;
+        ArrayList<ObjectStreamConstants> objstreams = streams.get(referenceSocket);
         Path path = Paths.get(weatherFileName);
         try {
-            socketOutput = new PrintWriter(referenceSocket.getOutputStream(), true);
             if ((!Files.exists(path)) || (Files.size(path) == 0)) { // if weather data empty
-                socketOutput.println("204");
+                ((ObjectOutputStream) objstreams.getFirst()).writeObject("204");
+                ((ObjectOutputStream) objstreams.getFirst()).flush();
                 return;
             }
 
@@ -402,8 +422,8 @@ public class AggregationServer {
             String weatherDataJSON = jp.stringToJSON(weatherData);
 
             if (stationID.equals("all")) { // if stationID = all, return all data
-                socketOutput.println(weatherDataJSON);
-                socketOutput.flush();
+                ((ObjectOutputStream) objstreams.getFirst()).writeObject(weatherDataJSON);
+                ((ObjectOutputStream) objstreams.getFirst()).flush();
                 return;
             }
             // otherwise, search through weather file
@@ -427,14 +447,13 @@ public class AggregationServer {
                 necessaryData += (curr_entry.getKey() + ":" + curr_entry.getValue() + "\n");
             }
             if (necessaryData.isEmpty()) {
-                socketOutput.println("204");
-                socketOutput.flush();
+                ((ObjectOutputStream) objstreams.getFirst()).writeObject("204");
+                ((ObjectOutputStream) objstreams.getFirst()).flush();
                 return;
             } else {
                 necessaryData = jp.stringToJSON(necessaryData);
-                System.out.println(necessaryData);
-                socketOutput.println(necessaryData);
-                socketOutput.flush();
+                ((ObjectOutputStream) objstreams.getFirst()).writeObject(necessaryData);
+                ((ObjectOutputStream) objstreams.getFirst()).flush();
                 return;
             }
         } catch (IOException ie) {
@@ -496,11 +515,6 @@ public class AggregationServer {
                         currentWeatherData.replace(new_entry.getKey(), new_entry.getValue());
                         whoUpdated.put(new_entry.getKey(), ID);
                         newEntries.remove(new_entry.getKey()); // remove it from newEntries vector
-                        // if key hasn't been added before, add to whoUpdated hashmap
-                        //if (whoUpdated.get(new_entry.getKey()) == null) {
-//                        } else {
-//                            whoUpdated.replace(new_entry.getKey(), ID); // else, replace existing author with new author
-//                        }
                     }
                 }
             }
