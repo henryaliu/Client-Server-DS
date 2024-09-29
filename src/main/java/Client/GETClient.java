@@ -10,7 +10,7 @@ import java.net.UnknownHostException;
 import java.util.Scanner;
 
 public class GETClient implements Serializable {
-    // Provides a common serialisation ID across all servers/entities
+    // Provides a universal serialisation ID across all servers/entities
     @Serial
     private static final long serialVersionUID = 4567L;
 
@@ -28,6 +28,10 @@ public class GETClient implements Serializable {
 
     private String JSON;
     private String receivedData;
+
+    public GETClient() {
+        clock = new LamportClock();
+    }
 
     // Get server name, port number, and stationID if there is one
     public void getInfo() {
@@ -50,11 +54,11 @@ public class GETClient implements Serializable {
         System.out.println("Enter the stationID you need data from (press enter to skip - you will receive all data): ");
         this.stationID = scanner.nextLine();
         if (this.stationID.isEmpty()) {
-            this.stationID = "all";
+            this.stationID = "latest";
         }
-        clock.updateTime(); // *** state change: port and server info received
     }
 
+    // No state change when GET message sent, so aggregation server does not update lamport clock until it sends back
     public void sendGET(Integer port) {
         // get message format:
         // GET /AggregationServer/SERVER_DATA.txt HTTP/1.1
@@ -84,22 +88,31 @@ public class GETClient implements Serializable {
             try {
                 JSON = (String) input.readObject();
                 String[] lines = JSON.split(System.lineSeparator());
-                if ((lines[0] != null) && !(JSON.isEmpty())) {
-                    if (lines[0].equals("204") || JSON.equals("204")) {
+                if ((lines[0] != null) && !(JSON.isEmpty()) && (lines[1] != null)) {
+                    if (lines[1].equals("204") || JSON.equals("204")) {
                         System.out.println("Error: no request data was found");
                         return;
                     }
-                    if (lines[0].equals("400") || JSON.equals("400")) {
+                    if (lines[1].equals("400") || JSON.equals("400")) {
                         System.out.println("Error: This request was not recognised");
                         return;
                     }
 
                     // check if we received EMPTY_GET status
-                    if (lines[0].equals("EMPTY_GET") || JSON.equals("EMPTY_GET")) {
+                    if (lines[1].equals("EMPTY_GET") || JSON.equals("EMPTY_GET")) {
                         System.out.println("Error: The server's weather file is empty");
                         return;
                     }
 
+                    // remove first line from JSON
+                    JSON = "";
+
+                    for (int i = 1; i < lines.length; ++i) {
+                        JSON += lines[i];
+                        if (i != lines.length - 1) {
+                            JSON += "\n";
+                        }
+                    }
                     // convert the JSON string to regular entry file format string
                     JSONParser jp = new JSONParser();
                     String[] receivedData = jp.JSONtoString(JSON).split(System.lineSeparator());
@@ -110,7 +123,8 @@ public class GETClient implements Serializable {
                         System.out.println("     " + receivedData[i]);
                     }
                     System.out.println("********************************");
-                    clock.updateTime(); // *** data is fully received and printed
+                    clock.processEvent(Integer.parseInt(lines[0])); // lines[0] = lamport timestamp from AS
+                    System.out.println(clock.getTime());
                     return;
                 }
             } catch (IOException | ClassNotFoundException e) {
@@ -124,7 +138,7 @@ public class GETClient implements Serializable {
         // run main operation loop
         try {
             clientSocket = new Socket(serverName, port); // send socket
-            if (this.stationID.equals("all")) {
+            if (this.stationID.equals("latest")) {
                 System.out.println("GETClient (reading all data): Connected to the weather server!");
             } else {
                 System.out.println("GETClient (reading from Content Server " + this.stationID + "): Connected to the weather server!");
@@ -132,9 +146,9 @@ public class GETClient implements Serializable {
 
             output = new ObjectOutputStream(clientSocket.getOutputStream());
             input = new ObjectInputStream(clientSocket.getInputStream());
-            output.writeObject("GETClient" + this.stationID); // send "stationID" to AS
+            clock.updateTime(); // *** all sockets instantiated = 1 event
+            output.writeObject(clock.getTime() + "\n" + "GETClient" + this.stationID); // send timestamp and stationID
             output.flush();
-            clock.updateTime(); // *** sockets instantiated, clock is updated
 
             Scanner scanner = new Scanner(System.in); // scan terminal for user PUT requests
             String currLine = "";

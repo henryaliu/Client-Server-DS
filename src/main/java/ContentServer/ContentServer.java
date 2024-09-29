@@ -17,20 +17,21 @@ import java.util.Scanner;
 import java.util.UUID;
 
 public class ContentServer implements Serializable {
-    // Provides a common serialisation ID across all servers/entities
+    // Provides a universal serialisation ID across all servers/entities
     @Serial
     private static final long serialVersionUID = 4567L;
 
+    private final LamportClock clock;
+
     // globally number each CS
     private final String stationID;
-
-    private final LamportClock clock;
 
     private ObjectOutputStream outstream;
     private ObjectInputStream reader;
 
     private String serverName;
     private Integer port;
+    private String HOST;
 
     public String inputFileLoc;
     public String outputFileLoc;
@@ -42,13 +43,13 @@ public class ContentServer implements Serializable {
     public void getParameters() {
         Scanner scanner = new Scanner(System.in);
         System.out.println("Enter server name and port number (in URL format): ");
-        String param1 = scanner.nextLine();
+        HOST = scanner.nextLine();
 
         // server name and port number URL format:
         // "https://servername.cia.gov:portnumber"
 
         // parsing process for the URL
-        String[] domain = param1.split("//", 2);
+        String[] domain = HOST.split("//", 2);
         String[] sName = domain[1].split("\\.", 2);
         this.serverName = sName[0];
         String[] portInput = sName[1].split(":", 2);
@@ -57,6 +58,7 @@ public class ContentServer implements Serializable {
         // parsing process for entry file location
         System.out.println("Enter location of the entry file ('filename.txt'): ");
         this.inputFileLoc = scanner.nextLine();
+        clock.updateTime(); // *** internal state change: server and port added (1 event)
     }
 
     public ContentServer() {
@@ -75,7 +77,8 @@ public class ContentServer implements Serializable {
 
             outstream = new ObjectOutputStream(csSocket.getOutputStream());
             reader = new ObjectInputStream(csSocket.getInputStream()); // initialise inputstream as well here
-            outstream.writeObject("CS" + this.stationID); // send "stationID" to AS
+            clock.updateTime(); // *** Internal state change: sockets updated (1 event)
+            outstream.writeObject(clock.getTime() + "\n" + "CS" + this.stationID); // send timestamp and stationID
             outstream.flush();
 
             Scanner scanner = new Scanner(System.in); // scan terminal for user PUT requests
@@ -87,6 +90,7 @@ public class ContentServer implements Serializable {
                 } else if (currLine.equals("END")) {
                     csSocket.shutdownInput();
                     csSocket.shutdownOutput();
+                    clock.updateTime();
                     csSocket.close();
                     return;
                 } else {
@@ -95,27 +99,14 @@ public class ContentServer implements Serializable {
             }
         } catch (SocketException se) {
             System.out.println("Failed to connect to AS: " + se.getMessage());
+            clock.updateTime();
         } catch (IOException ie) {
             System.out.println("Failed to send inform");
+            clock.updateTime();
         }
     }
 
     public void sendPUT(Integer port) {
-        // Read what the entry file content type is
-        ArrayList<String> contentTypes = new ArrayList<String>();
-        try {
-            BufferedReader typeReader = new BufferedReader(new FileReader(inputFileLoc));
-            String tempLine;
-            String lineWords[];
-            while ((tempLine = typeReader.readLine()) != null) {
-                lineWords = tempLine.split(":", 2);
-                contentTypes.add(lineWords[0]);
-            }
-        } catch (IOException ie) {
-            System.out.println("Failed to send PUT request: " + ie.getMessage());
-            return;
-        }
-
         // parse to JSON using JSONParser.JSONParser
         JSONParser jp = new JSONParser();
         // Parse the file to new JSON file
@@ -127,6 +118,7 @@ public class ContentServer implements Serializable {
                 long length = ((Files.lines(Paths.get(path.toUri())).count()));
                 // Send the HTTPS PUT message containing the JSON data to the AS
                 PUT = "PUT /ContentServer/weather.json HTTP/1.1" + "\n"; // first line, doesn't change
+                PUT += "Host: " + HOST + "\n";
                 PUT += "User-Agent: ATOMClient/1/0" + "\n";
                 PUT += "Content-Type: weather/json" + "\n"; // stationID
                 PUT += "Content-Length: " + length + "\n" + " " + "\n";
@@ -135,15 +127,20 @@ public class ContentServer implements Serializable {
             } else {
                 // file doesn't exist
                 System.out.println("Error - Failed to read JSON file into the PUT message: ");
+                clock.updateTime();
                 return;
             }
         } catch (IOException ie) {
             System.out.println("Couldn't read local JSON file: " + ie.getMessage());
+            clock.updateTime();
             return;
         }
 
         // send the PUT message
         try {
+            // add timestamp first
+            clock.updateTime();
+            PUT = (clock.getTime() + "\n" + PUT);
             outstream.writeObject(PUT);
             outstream.flush();
         } catch (IOException ie) {
@@ -152,36 +149,46 @@ public class ContentServer implements Serializable {
         }
 
         // Check for confirmation (thumbs up) from AS
-        String status = "";
+        String received = "";
         while (true) {
             try {
-                if (((status = (String) reader.readObject()) != null) && !(status.isEmpty())) {
-                    if (status.equals("500")) {
+                if (((received = (String) reader.readObject()) != null) && !(received.isEmpty())) {
+                    String[] status = received.split(System.lineSeparator());
+                    int receivedTime = Integer.parseInt(status[0]); // first line is timestamp
+                    if (status[1].equals("500")) {
                         System.out.println("500 - Internal server error" + "\n");
+                        clock.processEvent(receivedTime);
                         return; // unsuccessful put, so return
-                    } else if (status.equals("204")) { // for potential errors?
+                    } else if (status[1].equals("204")) { // for potential errors?
                         System.out.println("204 - No content was received" + "\n");
+                        clock.processEvent(receivedTime);
                         return; // return because it wasn't successful
-                    } else if (status.equals("400")) {
+                    } else if (status[1].equals("400")) {
                         System.out.println("400");
+                        clock.processEvent(receivedTime);
                         return;
-                    } else if (status.equals("201")) {
+                    } else if (status[1].equals("201")) {
                         System.out.println("201 - HTTP_CREATED" + "\n");
+                        clock.processEvent(receivedTime);
                         return;
-                    } else if (status.equals("200")) {
+                    } else if (status[1].equals("200")) {
                         System.out.println("200 - Request successful" + "\n");
+                        clock.processEvent(receivedTime);
                         return;
                     } else {
                         // ignore other messages
                         System.out.println("Unidentifiable response from the aggregation server");
+                        clock.processEvent(receivedTime);
                         return;
                     }
                 }
             } catch (IOException | ClassNotFoundException e) {
                 if (e.getMessage().equals("invalid type code: AC")) { // if error suggests the stream is empty
                     System.out.println(e.getMessage());
+                    clock.updateTime();
                     continue;
                 } else {
+                    clock.updateTime();
                     return;
                 }
             }

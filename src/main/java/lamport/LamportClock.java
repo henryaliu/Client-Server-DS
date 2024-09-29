@@ -12,11 +12,12 @@ public class LamportClock {
         this.time = new AtomicInteger(0); // begin at 0
     }
 
-    // Process the tie break given a received timestamp from another entity
+    // Updates the lamport clock based on local and received timestamps
     // when sent or a time is received, this counts as an event, so increment the time
+    // Returns: time (post tie-break)
     public int processEvent(int receivedTime) {
         // Accept the greater of the two times received
-        return time.updateAndGet(current -> Math.max(current, receivedTime) + 1);
+        return time.updateAndGet(currentTime -> (Math.max(currentTime, receivedTime) + 1));
     }
 
     // increment the time, and then return the current time
