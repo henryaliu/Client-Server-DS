@@ -124,7 +124,6 @@ public class GETClient implements Serializable {
                     }
                     System.out.println("********************************");
                     clock.processEvent(Integer.parseInt(lines[0])); // lines[0] = lamport timestamp from AS
-                    System.out.println(clock.getTime());
                     return;
                 }
             } catch (IOException | ClassNotFoundException e) {
