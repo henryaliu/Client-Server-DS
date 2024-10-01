@@ -30,9 +30,6 @@ public class AggregationServer implements Serializable {
     private String port;
     private ServerSocket ass;
 
-    // Stores the IDs of all entities that are connected (If connection is content server, this is stationID)
-    private volatile Vector<String> entityIDs = new Vector<String>();
-
     // Stores individual threads for each socket (Content Server or Client) connected to the server
     // String = ID of the entity, Socket = entity's socket
     private volatile ConcurrentHashMap<String, Socket> socketThreads = new ConcurrentHashMap<String, Socket>();
@@ -45,15 +42,6 @@ public class AggregationServer implements Serializable {
     // String = request data (e.g. JSON data), Socket = entity's socket
     private volatile BlockingQueue<ConcurrentHashMap.Entry<String, Socket>> requestQueue = new LinkedBlockingQueue<ConcurrentHashMap.Entry<String, Socket>>();
 
-    // Concurrent thread-safe Hash table which stores pairs of the weather data entry (type), and the last time the entry was updated
-    // Updated whenever PUT request or weather data cleanup is conducted
-    // String = entry type, long = currentTimeMillis() at last update
-    private volatile ConcurrentHashMap<String, Long> lastUpdateTimes = new ConcurrentHashMap<String, Long>(); // TO REMOVE
-
-    // Concurrent thread-safe Hash table which stores pairs of the weather data entry (type), and the ID of who last updated it
-    // String: entry type, String: who last updated it
-    private volatile ConcurrentHashMap<String, String> whoUpdated = new ConcurrentHashMap<String, String>(); // TO REMOVE
-
     // Stores the files and their updated times
     // Function checkUpdateTimes uses this to compare with latest time, removing it if it is older than 30 seconds or if limit 20 exceeded and the oldest is removed
     // String: weather data file path/name, Long: currentTimeMillis() of when it was added (remove when older than 30s from current time)
@@ -64,7 +52,7 @@ public class AggregationServer implements Serializable {
         Scanner scanner = new Scanner(System.in);
         System.out.println("Enter the port for this Aggregation server (press enter to skip): ");
         String input = scanner.nextLine();
-        if (input.isEmpty()) {
+        if (input.isEmpty() || input.trim().isEmpty()) {
             this.port = "4567"; // default port is 4567
             return;
         } else {
@@ -74,6 +62,7 @@ public class AggregationServer implements Serializable {
             } catch (NumberFormatException nfe) {
                 System.out.println("INVALID PORT: Not a number. Please retry.");
                 getPort();
+                return;
             }
             return;
         }
@@ -86,7 +75,7 @@ public class AggregationServer implements Serializable {
         getPort();
         clock.updateTime();
 
-        int attempts = 1;
+        int attempts = 0;
         while (attempts <= 6) { // Allow the server 5 attempts to retry creating a ServerSocket
             try {
                 ass = new ServerSocket(Integer.parseInt(this.port));
@@ -94,11 +83,22 @@ public class AggregationServer implements Serializable {
                 break;
             } catch (IOException ie) {
                 attempts++;
-                System.out.println("Attempt " + attempts + ": couldn't establish ServerSocket. Retrying..." + ie.getMessage());
+                System.out.println("Attempt " + attempts + ": couldn't establish ServerSocket: " + ie.getMessage());
+                System.out.println("\nRetrying...");
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    System.out.println("Thread sleep fault - Continuing where we left off...");
+                }
                 if (attempts == 6) {
                     System.out.println(attempts + " attempts failed. Aggregation server is aborted.");
+                    System.exit(0);
                     return;
                 }
+            } catch (IllegalArgumentException iae) {
+                System.out.println("This port is invalid: " + iae.getMessage());
+                new AggregationServer();
+                return;
             }
         }
         System.out.println("Aggregation server is ONLINE.");
@@ -142,7 +142,7 @@ public class AggregationServer implements Serializable {
         Thread listen = new Thread(() -> {
             while (true) { // Loop runs in the background, listening for any incoming sockets
                 Socket sc;
-                if (!ass.isClosed()) {
+                if ((ass != null) && (!ass.isClosed())) {
                     try {
                         if ((sc = ass.accept()) != null) {
                             clock.updateTime(); // socket accepted = 1 event
@@ -165,12 +165,6 @@ public class AggregationServer implements Serializable {
                             clock.processEvent(Integer.parseInt(socketDataSplitted[0])); // Tie-break of socket time and local time
 
                             String identity = socketDataSplitted[1];
-                            if (entityIDs.contains(identity)) { // Checks if the AggregationServer already has this ID in its system
-                                System.out.println("Connection attempt denied: an entity with this ID already exists!");
-                                continue;
-                            } else {
-                                entityIDs.add(identity); // Adds the client ID to the server's records
-                            }
 
                             socketThreads.put(identity, sc); // Adds the socket to HashMap database
                             ArrayList<ObjectStreamConstants> objstreams = new ArrayList<>();
@@ -200,6 +194,7 @@ public class AggregationServer implements Serializable {
     // Threaded function (runs in background): Continuously loop through and check for requests sent by the provided socket
     // Only called once per socket (when it is accepted by this server)
     // If it detects a request from the socket's stream, it peeks the data for validity, and formats the data ready to be queued
+    // socket = The socket the request was sent by, identity: the entity's ID
     public void listenForRequests(Socket socket, String identity) {
         Thread listenRequests = new Thread(() -> {
             // loop to check for any incoming requests from the socket
@@ -254,69 +249,6 @@ public class AggregationServer implements Serializable {
         listenRequests.start();
     }
 
-    // timestamp occurs when: when socket first connects and whenever a request is executed by weather server (only 1 instance)
-//    public void checkUpdateTimes() {
-//        Thread checkTimes = new Thread(() -> {
-//            while (true) {
-//                // search through last updated time for each entry type
-//                try {
-//                    Thread.sleep(10);
-//                } catch (InterruptedException ie) {
-//                    System.out.println("Timer thread interrupted: " + ie.getMessage());
-//                    clock.updateTime();
-//                    continue;
-//                }
-//                boolean removed = false;
-//                if (!(lastUpdateTimes.isEmpty())) {
-//                    for (ConcurrentHashMap.Entry<String, Long> curr : lastUpdateTimes.entrySet()) {
-//                        // if current time - last updated time of entry > 30000, delete the entry
-//                        if ((System.currentTimeMillis() - curr.getValue()) >= 30000) {
-//                            removed = true;
-//                            lastUpdateTimes.remove(curr.getKey());
-//                        }
-//                    }
-//                    if (removed) {
-//                        // rewrite the weather data file
-//                        try {
-//                            // get weather data types into hashmap, compare with lastUpdateTimes, if not there, remove
-//                            // and then rewrite from weather hashmap
-//                            Path path = Paths.get(weatherFileName);
-//                            String weatherData = Files.readString(path);
-//                            String[] lines = weatherData.split(System.lineSeparator());
-//                            String[] currLine;
-//                            ConcurrentHashMap<String, String> currentData = new ConcurrentHashMap<String, String>(); // to print
-//                            if (lines.length >= 1) { // loop through all lines of the weather data
-//                                for (int i = 0; i < lines.length; ++i) {
-//                                    currLine = lines[i].split(":", 2);
-//                                    currentData.put(currLine[0], currLine[1]);
-//                                }
-//                            }
-//                            // compare
-//                            for (ConcurrentHashMap.Entry<String, String> curr_data : currentData.entrySet()) {
-//                                if (lastUpdateTimes.get(curr_data.getKey()) == null) {
-//                                    // remove the expired content from copy of the current data
-//                                    currentData.remove(curr_data.getKey());
-//                                }
-//                            }
-//                            // rewrite data file
-//                            PrintWriter pw = new PrintWriter(weatherFileName);
-//                            for (ConcurrentHashMap.Entry<String, String> curr_data : currentData.entrySet()) {
-//                                pw.println(curr_data.getKey() + ":" + curr_data.getValue());
-//                            }
-//                            pw.flush();
-//                        } catch (IOException ie) {
-//                            System.out.println("Error removing expired content: " + ie.getMessage());
-//                        }
-//                        System.out.println("Expired content detected. Content removed.");
-//                        clock.updateTime(); // *** file updated = 1 event
-//                    }
-//                }
-//            }
-//        });
-//        checkTimes.setDaemon(true);
-//        checkTimes.start();
-//    }
-
     // Threaded function (runs-in-background): Continuously checks the currentFiles HashMap for expired content to remove
     // Only called once - only one instance exists
     // Loops through a HashMap containing files and their last updated time, compares with current time, checks if >30 seconds
@@ -324,17 +256,16 @@ public class AggregationServer implements Serializable {
         Thread checkTimes = new Thread(() -> {
             while (true) {
                 boolean removed = false;
-                for (ConcurrentHashMap.Entry<String, Long> curr_file : currentFiles.entrySet()) { // Removing all expired content
+                for (ConcurrentHashMap.Entry<String, Long> curr_file : currentFiles.entrySet()) { // HashMap of files and their last update time
                     if ((System.currentTimeMillis() - curr_file.getValue()) > 30000) {
                         currentFiles.remove(curr_file.getKey());
-                        String[] currLine = curr_file.getKey().split("_", 2);
-                        currLine[0] = currLine[0].replaceAll("SERVER_DATA_", "");
-                        entityIDs.remove(currLine[0]);
+                        String[] currLine = curr_file.getKey().split("_", 2); // Get the file path and name
+                        currLine[0] = currLine[0].replaceAll("SERVER_DATA_", ""); // Extracts the stationID from the file name
                         File currentFile = new File(curr_file.getKey());
                         if (currentFile.delete()) {
                             removed = true;
                         } else {
-                            System.out.println("Failed to remove expired content. Trying again...");
+                            System.out.println("Failed to remove some expired content. Trying again..."); // Since this is a loop, it will try again
                         }
                     }
                 }
@@ -344,7 +275,7 @@ public class AggregationServer implements Serializable {
                 }
 
                 try {
-                    Thread.sleep(10);
+                    Thread.sleep(10); // Small break to avoid thread resource-overload
                 } catch (InterruptedException ie) {
                     System.out.println("Timer thread interrupted: " + ie.getMessage());
                     clock.updateTime();
@@ -356,32 +287,33 @@ public class AggregationServer implements Serializable {
         checkTimes.start();
     }
 
-    // checks for new requests sent by threads in socketThreads and executes them - only 1 instance of this thread is run
+    // Threaded function (runs-in-background): Continuously checks the requestQueue for new tasks to execute
+    // Checks for new requests added to the queue and executes them - only 1 instance of this thread is run
+    // Requests in the queue are already scanned for validity, this function extracts the stationID at the first line
+    // The stationID is only used for the PUT request so the server knows where to put the file
     public void checkForTasks() {
         Thread checkThreads = new Thread(() -> {
             while (true) {
                 try {
-                    Thread.sleep(2000); // wait 0.5 seconds before doing a task
+                    Thread.sleep(2000); // Allows time for new requests to be added and prevents resource-overload
                 } catch (InterruptedException ie) {
                     System.out.println("Delay fault in task checker: " + ie.getMessage());
                 }
-                if (!requestQueue.isEmpty()) {
-                    for (ConcurrentHashMap.Entry<String, Socket> curr_request : requestQueue) { // for each request in the queue
+                if (!requestQueue.isEmpty()) { // Only checks the queue if it isn't empty
+                    for (ConcurrentHashMap.Entry<String, Socket> curr_request : requestQueue) { // Loops through each entry in the queue
                         // Get the stationID from the data by first splitting the string into an array of lines for convenience
                         String[] lines = curr_request.getKey().split(System.lineSeparator());
-                        String stationID = lines[0]; // only for PUT
+                        String stationID = lines[0]; // store the entityID, which is stationID and only used during PUT requests
 
-                        // remove first line from data if PUT
                         String requestData = "";
-                        for (int i = 1; i < lines.length; ++i) {
+                        for (int i = 1; i < lines.length; ++i) { // Removes entityID from the first line
                             requestData += (lines[i]);
                             if (i != (lines.length - 1)) {
                                 requestData += ("\n");
                             }
                         }
-                        // execute the request
-                        executeRequest(requestData, curr_request.getValue(), stationID);
-                        requestQueue.remove(); // once executed, remove request from queue
+                        executeRequest(requestData, curr_request.getValue(), stationID); // Non-threaded function -> Blocked call
+                        requestQueue.remove(); // Waits for above function to finish, before removing it from the queue.
                         clock.updateTime();
                     }
                 }
@@ -391,7 +323,10 @@ public class AggregationServer implements Serializable {
         checkThreads.start();
     }
 
-    // request: HTTPS PUT or GET request stored in String (normal format, no stationID or lamport at top)
+    // Non-threaded function: Can be called multiple times
+    // Checks through the request data more rigorously to ensure the format is valid
+    // Checks for entries such as Host and User-Agent, and Content data if its a PUT message
+    // Returns true if valid, false if not, request = request message as a String
     public boolean isValidRequest(String request) {
         if ((request == null) || request.isEmpty()) {
             return false;
@@ -399,8 +334,8 @@ public class AggregationServer implements Serializable {
         String[] lines = request.split(System.lineSeparator());
         ArrayList<String> requestEntryTypes = new ArrayList<>();
         String[] firstLine = lines[0].split(" ", 3);
-        for (int i = 1; i < lines.length; ++i) {
-            requestEntryTypes.add(lines[i].split(":", 2)[0].trim()); // Only get the request entry type (e.g. Host)
+        for (int i = 1; i < lines.length; ++i) { // Ignores the first line which tells us if its PUT or GET
+            requestEntryTypes.add(lines[i].split(":", 2)[0].trim()); // Only get the request entry type (e.g. Host, User-Agent)
         }
         if (!requestEntryTypes.contains("Host")) {
             return false;
@@ -417,30 +352,31 @@ public class AggregationServer implements Serializable {
         return true;
     }
 
-    // to execute the task (not a thread, to achieve blocking)
+    // Non-threaded function (blocked): Function must finish before next line of code executes -> Ensures 1 request at a time
+    // Identifies which request it is, and calls it
+    // requestData = request message as a String, referenceSocket = socket the request was sent by, ID = entity's ID
     public void executeRequest(String requestData, Socket referenceSocket, String ID) {
         ArrayList<ObjectStreamConstants> objstreams = streams.get(referenceSocket);
         try {
-            if (requestData.isEmpty() || (!isValidRequest(requestData))) { // check that string isn't empty and socket isn't null
+            if (requestData.isEmpty() || (!isValidRequest(requestData))) { // Checks request message isn't empty or invalid
                 clock.updateTime();
                 ((ObjectOutputStream) objstreams.getFirst()).writeObject(clock.getTime() + "\n" + "204");
                 ((ObjectOutputStream) objstreams.getFirst()).flush();
                 return;
             }
 
-            // see if its PUT or GET request, isolate the PUT data if its PUT
             String[] requestLines = requestData.split("\\r?\\n");
             String[] currLine = requestLines[0].split(" ", 3); // first line
             if (currLine[0].equals("PUT")) {
-                clock.updateTime(); // PUT message counts as event;
-                executePUT(requestData, referenceSocket, ID); // execute put request
+                clock.updateTime(); // Calling the PUT message counts as event;
+                executePUT(requestData, referenceSocket, ID);
                 return;
             } else if (currLine[0].equals("GET")) {
-                executeGET(requestData, referenceSocket, ID);
+                executeGET(requestData, referenceSocket, ID); // Clock doesn't update UNTIL data is sent, so no clock update here
                 return;
             } else {
                 System.out.println("Unidentifiable request - No action took place");
-                clock.updateTime();
+                clock.updateTime(); // Request failure = 1 event
                 ((ObjectOutputStream) objstreams.getFirst()).writeObject(clock.getTime() + "\n" + "500");
                 ((ObjectOutputStream) objstreams.getFirst()).flush();
                 return;
@@ -451,14 +387,16 @@ public class AggregationServer implements Serializable {
         }
     }
 
+    // Non-threaded function (blocked): Executes PUT request
+    // Gets the JSON data within the request message, converts it from JSON, decides what to do with it
+    // requestData = PUT message as String, referenceSocket = socket that sent the PUT, ID = entity's ID (stationID)
     public void executePUT(String requestData, Socket referenceSocket, String ID) {
         ArrayList<ObjectStreamConstants> objstreams = streams.get(referenceSocket);
-        try { // Check socket works
-            ID = ID.replaceAll("CS", "");
+        try {
+            ID = ID.replaceAll("CS", ""); // Omits the CS from the ID, leaving only the numeric value
             String[] requestLines = requestData.split("\r?\n");
-            // skip straight to 7th line, on 1st line currently
-            if (requestLines.length > 6) { // extra check to avoid bounds error
-                if (!(requestLines[6].equals("{")) || !(requestLines[requestLines.length - 1].equals("}"))) { // check for { and }
+            if (requestLines.length > 6) { // Checks bounds are long enough
+                if (!(requestLines[6].equals("{")) || !(requestLines[requestLines.length - 1].equals("}"))) { // Checks the JSON is enclosed by brackets
                     clock.updateTime();
                     ((ObjectOutputStream) objstreams.getFirst()).writeObject(clock.getTime() + "\n" + "500");
                     ((ObjectOutputStream) objstreams.getFirst()).flush();
@@ -466,11 +404,9 @@ public class AggregationServer implements Serializable {
                 }
                 JSONParser jp = new JSONParser();
                 ConcurrentHashMap<String, String> types = jp.getFeedTypes();
-                String[] lineElements; // [0] = type, [1] = data
+                String[] lineElements; // [0] = type, [1] = data (e.g: [0] = dewpt, [1] = 5.7)
                 String PUT_DATA = "";
-                ConcurrentHashMap<String, String> tempForUpdatees = new ConcurrentHashMap<String, String>();
-                for (int i = 7; i < requestLines.length - 1; ++i) { // check through each line for coherence except last (} line)
-                    // convert to regular text
+                for (int i = 7; i < requestLines.length - 1; ++i) { // Loop to trim spaces from data & check entries make sense
                     lineElements = requestLines[i].split(":", 2);
                     lineElements[0] = lineElements[0].trim();
                     lineElements[0] = lineElements[0].replace("\"", "");
@@ -479,42 +415,38 @@ public class AggregationServer implements Serializable {
                     lineElements[1] = lineElements[1].replaceAll("\"", "");
 
                     if ((types.get(lineElements[0]) != null) && (types.get(lineElements[0]).equals("string")) && jp.isNumber(lineElements[1])) {
-                        // if type is string, but the value is int
                         clock.updateTime();
                         ((ObjectOutputStream) objstreams.getFirst()).writeObject(clock.getTime() + "\n" + "500");
                         ((ObjectOutputStream) objstreams.getFirst()).flush();
-                        return;
+                        return; // Don't PUT the message if the entry type is string but the value is a number
                     }
                     if ((types.get(lineElements[0]) != null) && (types.get(lineElements[0]).equals("int")) && (!jp.isNumber(lineElements[1]))) {
-                        // if type is int, but the value is string
                         clock.updateTime();
                         ((ObjectOutputStream) objstreams.getFirst()).writeObject(clock.getTime() + "\n" + "500");
                         ((ObjectOutputStream) objstreams.getFirst()).flush();
-                        return;
+                        return; // Don't PUT the message if the entry type is int but the value is a string
                     }
                     PUT_DATA += (lineElements[0] + ":" + lineElements[1] + "\n");
-                    lastUpdateTimes.put(lineElements[0], System.currentTimeMillis()); // also add the types and their timestamps
-                    tempForUpdatees.put(lineElements[0], ID);
                 }
                 String weatherFileName = "AggregationServer/SERVER_DATA_" + ID + ".txt";
                 Path path = Paths.get(weatherFileName);
                 try {
-                    if (Files.exists(path) && (Files.size(path) > 0)) {
-                        updateFile(PUT_DATA, ID); // JSON is valid, update the file with this data
+                    if (Files.exists(path) && (Files.size(path) > 0)) { // Checks the file exists and isn't empty
+                        updateFile(PUT_DATA, ID); // If file exists and isn't empty, call function to update the file
                         clock.updateTime();
                         ((ObjectOutputStream) objstreams.getFirst()).writeObject(clock.getTime() + "\n" + "200");
                         ((ObjectOutputStream) objstreams.getFirst()).flush();
                         return;
-                    } else { // else create and print to new file, return 201
+                    } else { // Else, a new file needs to be made
                         System.out.println("No weather file yet - creating one now");
-                        FileWriter temp = new FileWriter(weatherFileName);
+                        FileWriter temp = new FileWriter(weatherFileName); // Creates the file
                         temp.close();
-                        PrintWriter writer = new PrintWriter(weatherFileName);
+                        PrintWriter writer = new PrintWriter(weatherFileName); // Writes data to the file
                         writer.println(PUT_DATA);
                         writer.flush();
                         writer.close();
                         currentFiles.put(weatherFileName, System.currentTimeMillis()); // Add/replace file to currentFiles hashmap
-                        clock.updateTime(); // send message back
+                        clock.updateTime(); // Sending the message back = 1 event
                         ((ObjectOutputStream) objstreams.getFirst()).writeObject(clock.getTime() + "\n" + "201");
                         ((ObjectOutputStream) objstreams.getFirst()).flush();
                         return;
@@ -525,7 +457,7 @@ public class AggregationServer implements Serializable {
                 }
             } else {
                 clock.updateTime();
-                ((ObjectOutputStream) objstreams.getFirst()).writeObject(clock.getTime() + "\n" + "204"); // empty JSON
+                ((ObjectOutputStream) objstreams.getFirst()).writeObject(clock.getTime() + "\n" + "204"); // Empty JSON
                 ((ObjectOutputStream) objstreams.getFirst()).flush();
                 return;
             }
@@ -535,68 +467,74 @@ public class AggregationServer implements Serializable {
         }
     }
 
+    // Non-threaded function (blocked): Executes GET request
     // ID = GETClient ID NOT stationID
     // Not timestamped by clock until message is sent back to client
     // The timestamp is always the first line
+    // requestData = message as a String, referenceSocket = socket that sent the GET, ID = ID of the socket who sent GET
     public void executeGET(String requestData, Socket referenceSocket, String ID) {
         // Read text file
         ArrayList<ObjectStreamConstants> objstreams = streams.get(referenceSocket);
-        ID = ID.replaceAll("CS", "");
-        String weatherFileName = "AggregationServer/SERVER_DATA_" + ID + ".txt";
         try {
-            // read fourth line (index 3) for stationID to retrieve
             String[] requestLines = requestData.split("\r?\n");
             String stationID = "";
             if (requestLines.length > 3) {
+                // Retrieves the requested stationID from 4th line
                 String[] fourthLine = requestLines[3].split(":", 2);
                 String[] fourthLineData = fourthLine[1].split("/", 2);
                 stationID = fourthLineData[0].trim();
                 stationID = stationID.replaceAll("CS", "");
-                System.out.println(stationID);
             }
             Path filePath = Paths.get("");
-            if (stationID.equals("latest")) { // if stationID = all, return most recently uploaded data
-                // search for latest
-                Long latestTime = 0L; // latest time == largest long value
+            if (stationID.equals("latest")) { // "latest" = default by GETClient = Send back the latest added data
+                Long latestTime = 0L; // latestTime = largest Long value
                 Long currentTime = 0L;
-                for (ConcurrentHashMap.Entry<String, Long> curr_file : currentFiles.entrySet()) {
+                for (ConcurrentHashMap.Entry<String, Long> curr_file : currentFiles.entrySet()) { // Finds the last added file
                     if ((currentTime = curr_file.getValue()) > latestTime) {
                         latestTime = currentTime;
                         filePath = Paths.get(curr_file.getKey());
                     }
                 }
             } else {
+                // Sets the filename to unique file with the stationID found earlier appended to the end
                 filePath = Paths.get("AggregationServer/SERVER_DATA_" + stationID + ".txt");
-                if ((!Files.exists(filePath)) || (Files.size(filePath) == 0)) { // if weather data empty
+                if ((!Files.exists(filePath)) || (Files.size(filePath) == 0)) { // Returns an error if the file doesn't exist
                     clock.updateTime();
                     ((ObjectOutputStream) objstreams.getFirst()).writeObject(clock.getTime() + "\n" + "204");
                     ((ObjectOutputStream) objstreams.getFirst()).flush();
                     return;
                 }
             }
-            // convert to JSON, ready to send over
             JSONParser jp = new JSONParser();
-            String weatherData = Files.readString(filePath);
-            String weatherDataJSON = jp.stringToJSON(weatherData);
+            String weatherData = Files.readString(filePath); // Read the file into a String
+            String weatherDataJSON = jp.stringToJSON(weatherData); // Parse the data in the String into JSON
             clock.updateTime();
             ((ObjectOutputStream) objstreams.getFirst()).writeObject(clock.getTime() + "\n" + weatherDataJSON);
             ((ObjectOutputStream) objstreams.getFirst()).flush();
             return;
         } catch (IOException ie) {
             System.out.println("Error trying to fetch server weather data: " + ie.getMessage());
-            return;
+            try {
+                ((ObjectOutputStream) objstreams.getFirst()).writeObject(clock.getTime() + "\n" + "204");
+                ((ObjectOutputStream) objstreams.getFirst()).flush();
+                return;
+            } catch (IOException ie1) {
+                System.out.println("Error trying to send message back to client: " + ie1.getMessage());
+            }
         }
     }
 
     // updates the weather file with the given data (in regular text entry format), ID = stationID
+    // Non-threaded function (blocked): Helper function for executePUT function
+    // Updates file with new data by overwriting existing data and adding new data in a HashMap first, then printing it to the file
+    // entries = The data to be uploaded in non-JSON format, ID = ID of the content server who uploaded the file
     public void updateFile(String entries, String ID) {
         // first, check the file exists
         ID = ID.replaceAll("CS", "");
-        String weatherFileName = "AggregationServer/SERVER_DATA_" + ID + ".txt";
+        String weatherFileName = "AggregationServer/SERVER_DATA_" + ID + ".txt"; // Determine the file to modify
         Path path = Paths.get(weatherFileName);
         try {
-            if (!Files.exists(path) || Files.size(path) == 0) {
-                // if it doesn't exist, simply create this file, write to it, and return
+            if (!Files.exists(path) || Files.size(path) == 0) { // Redudant check: if file doesn't exist create it
                 System.out.println("No weather file yet - creating new one");
                 PrintWriter pw = new PrintWriter(weatherFileName);
                 pw.println(entries);
@@ -608,9 +546,9 @@ public class AggregationServer implements Serializable {
             System.out.println("Server error - data file doesn't exist, failed to make file."); // may be counterproductive
             return;
         }
-        // default: update existing file
+        // Default case: updates the existing file
         ConcurrentHashMap<String, String> currentWeatherData = new ConcurrentHashMap<String, String>();
-        try { // first, turn the weather file into string HashMap (type, entry)
+        try { // Turns the weather file into string HashMap containing key = type, value = data
             BufferedReader re = new BufferedReader(new FileReader(weatherFileName));
             String currLine = "";
             String[] temp;
@@ -622,44 +560,37 @@ public class AggregationServer implements Serializable {
             System.out.println("Server error - failed to retrieve server data file");
         }
 
-        // Split entries-to-update into newEntries HashMap
         String[] feed = entries.split(System.lineSeparator());
         ConcurrentHashMap<String, String> newEntries = new ConcurrentHashMap<String, String>();
         String[] feedLine;
-        for (int i = 0; i < feed.length; ++i) { // put new entries (type, value) into hashmap
+        for (int i = 0; i < feed.length; ++i) { // Puts the newly-uploaded data into a HashMap
             feedLine = feed[i].split(":", 2);
             newEntries.put(feedLine[0], feedLine[1]);
         }
 
-        // write new data to the data file
         try {
             PrintWriter pw = new PrintWriter(weatherFileName);
-            // for each entry to update
+            // For each entry to update
             for (ConcurrentHashMap.Entry<String, String> new_entry : newEntries.entrySet()) {
-                // for each entry in current weather data
+                // For each entry in the current weather data
                 for (ConcurrentHashMap.Entry<String, String> curr_entry : currentWeatherData.entrySet()) {
-                    // if entry-to-update equals current weather entry, replace current weather entry with updated entry
-                    if (new_entry.getKey().equals(curr_entry.getKey())) { // type already exists, so replace with new entry
+                    // if entry-to-update equals current weather entry, replace the current weather entry with updated entry
+                    if (new_entry.getKey().equals(curr_entry.getKey())) { // Special case: type already exists, so replace with new entry
                         currentWeatherData.replace(new_entry.getKey(), new_entry.getValue());
-                        newEntries.remove(new_entry.getKey()); // remove it from newEntries vector
+                        newEntries.remove(new_entry.getKey()); // Remove it from newEntries HashMap
                     }
                 }
             }
 
-            // check for values remaining (ie, they arent currently in the weather data
             if (!(newEntries.isEmpty())) {
-                currentWeatherData.putAll(newEntries);
-                for (ConcurrentHashMap.Entry<String, String> new_entry : newEntries.entrySet()) {
-                    whoUpdated.put(new_entry.getKey(), ID);
-                }
+                currentWeatherData.putAll(newEntries); // Adds entries that haven't been added before
             }
 
-            // overwrite existing file with curr_entry which was updated with new entries
             for (ConcurrentHashMap.Entry<String, String> curr_entry : currentWeatherData.entrySet()) {
-                pw.println(curr_entry.getKey() + ":" + curr_entry.getValue());
+                pw.println(curr_entry.getKey() + ":" + curr_entry.getValue()); // Reprint the file data with the new version
             }
             pw.flush();
-            clock.updateTime(); // file updated - 1 event
+            clock.updateTime(); // File updated = 1 event
         } catch (IOException ie) {
             System.out.println("Server error - failed to update weather data");
         }
@@ -669,8 +600,8 @@ public class AggregationServer implements Serializable {
         AggregationServer aggr = new AggregationServer();
         aggr.startScanThread();
         aggr.checkUpdateTimes();
-        aggr.checkForTasks(); // continuously check threads for incoming requests
-        aggr.listenForConnections(); // continuously listen for incoming connections
+        aggr.checkForTasks();
+        aggr.listenForConnections();
     }
 
 }

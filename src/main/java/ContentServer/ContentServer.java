@@ -2,7 +2,6 @@ package ContentServer;
 
 import JSONParser.JSONParser;
 import lamport.LamportClock;
-
 import java.io.*;
 import java.lang.management.ManagementFactory;
 import java.net.Socket;
@@ -13,7 +12,6 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Scanner;
-
 import java.util.UUID;
 
 public class ContentServer implements Serializable {
@@ -21,9 +19,10 @@ public class ContentServer implements Serializable {
     @Serial
     private static final long serialVersionUID = 4567L;
 
+    // Local Lamport Clock
     private final LamportClock clock;
 
-    // globally number each CS
+    // Unique instance stationID
     private final String stationID;
 
     private ObjectOutputStream outstream;
@@ -40,41 +39,81 @@ public class ContentServer implements Serializable {
     private Socket csSocket;
     private JSONParser parser;
 
+    // Gets the URL from the user
+    // Extracts the server name and port number
     public void getParameters() {
         Scanner scanner = new Scanner(System.in);
         System.out.println("Enter server name and port number (in URL format): ");
         HOST = scanner.nextLine();
 
+        if (HOST.isEmpty()) {
+            System.out.println("\nNO URL WAS PROVIDED - PLEASE TRY AGAIN\n");
+            getParameters();
+            return;
+        }
+
         // server name and port number URL format:
         // "https://servername.cia.gov:portnumber"
 
-        // parsing process for the URL
-        String[] domain = HOST.split("//", 2);
-        String[] sName = domain[1].split("\\.", 2);
-        this.serverName = sName[0];
-        String[] portInput = sName[1].split(":", 2);
-        this.port = Integer.parseInt(portInput[1]);
+        try {
+            String[] domain = HOST.split("//", 2); // Domain ("servername.cia.gov:portnumber")
+            String[] sName = domain[1].split("\\.", 2);
+            this.serverName = sName[0]; // servername
+            String[] portInput = sName[1].split(":", 2); // portnumber
+            this.port = Integer.parseInt(portInput[1]);
+        } catch (ArrayIndexOutOfBoundsException e) { // Retry on invalid URL format
+            System.out.println("\n*** ERROR: Invalid URL format! Please try again ***\n");
+            getParameters();
+            return;        }
 
-        // parsing process for entry file location
         System.out.println("Enter location of the entry file ('filename.txt'): ");
-        this.inputFileLoc = scanner.nextLine();
-        clock.updateTime(); // *** internal state change: server and port added (1 event)
+        if (((inputFileLoc = scanner.nextLine()).isEmpty()) || (inputFileLoc.trim().isEmpty())) { // Retry if empty file
+            System.out.println("\nNO FILE WAS PROVIDED - PLEASE TRY AGAIN\n");
+            getParameters();
+            return;
+        }
+        Path path = Paths.get(inputFileLoc);
+        if (!Files.exists(path)) {
+            System.out.println("\nFILE DOESN'T EXIST - PLEASE TRY AGAIN\n");
+            getParameters();
+            return;
+        }
+        clock.updateTime(); // *** Update when server is allowed to start with valid URL data
     }
 
+    // Begins the Content Server operations:
+    // Connects to the AggregationServer and then continuously listens for user prompts to END the server operations
+    // Retries on server unavailable error or socket connection error (Limit: 10 automatic attempts)
     public ContentServer() {
-        // give server unique ID based on the terminal info
+        // Creates a stationID unique to the terminal, based on the port used
         this.stationID = ManagementFactory.getRuntimeMXBean().getName().split("@")[0];
 
         clock = new LamportClock();
         fileData = new HashMap<String, String>();
 
-        // Get server name, port and file entry
         getParameters();
-        // Establish a connection to the AggregationServer.AggregationServer
-        try {
-            csSocket = new Socket(serverName, port); // send socket
-            System.out.println("Content server " + this.stationID + ": Connected to the weather server!");
+        int attempts = 0;
+        while (attempts != 11) { // Retry on error loop (Limit: 10 attempts)
+            try {
+                csSocket = new Socket(serverName, port); // Sends the socket
+                System.out.println("Content server " + this.stationID + ": Connected to the weather server!");
+                break;
+            } catch (IOException ie) {
+                System.out.println("Attempt #" + attempts + ": Connecting to Aggregation Server...");
+                if (attempts == 10) {
+                    System.out.println("Ten attempts have been made to connect to the server but to no avail. Content Server Aborted.\n");
+                    return;
+                }
+                attempts++;
+                try {
+                    Thread.sleep(2000); // Allow enough time to pass before trying again.
+                } catch (InterruptedException iee) {
+                    System.out.println("Error: " + iee.getMessage());
+                }
+            }
+        }
 
+        try {
             outstream = new ObjectOutputStream(csSocket.getOutputStream());
             reader = new ObjectInputStream(csSocket.getInputStream()); // initialise inputstream as well here
             clock.updateTime(); // *** Internal state change: sockets updated (1 event)
@@ -87,7 +126,7 @@ public class ContentServer implements Serializable {
                 currLine = scanner.nextLine();
                 if (currLine.equals("PUT")) {
                     sendPUT(port);
-                } else if (currLine.equals("END")) {
+                } else if (currLine.equals("END")) { // If the user types END, all live variables are shut down. Server ends.
                     csSocket.shutdownInput();
                     csSocket.shutdownOutput();
                     clock.updateTime();
@@ -100,33 +139,35 @@ public class ContentServer implements Serializable {
         } catch (SocketException se) {
             System.out.println("Failed to connect to AS: " + se.getMessage());
             clock.updateTime();
+            new ContentServer(); // Retry the server
+            return;
         } catch (IOException ie) {
-            System.out.println("Failed to send inform");
+            System.out.println("Failed to send information: " + ie.getMessage());
             clock.updateTime();
+            new ContentServer(); // Retry the server
+            return;
         }
     }
 
+    // Sends the PUT message to the socket the server is connected to (Aggregation Server)
+    // Retrieves the entry file, parses it to JSON String, serialises it and sends to server,
+    // and waits for confirmation that the data uploaded successfully.
     public void sendPUT(Integer port) {
-        // parse to JSON using JSONParser.JSONParser
-        JSONParser jp = new JSONParser();
-        // Parse the file to new JSON file
-        jp.textToJSON(inputFileLoc, "ContentServer/weather.json");
+        JSONParser jp = new JSONParser(); // Custom JSON Parser (see JSONParser folder)
+        jp.textToJSON(inputFileLoc, "ContentServer/weather.json"); // Parse the entry file to local weather.json file
         Path path = Paths.get("ContentServer/weather.json");
         String PUT = "";
         try {
             if (Files.exists(path) && (Files.size(path) > 0)) {
                 long length = ((Files.lines(Paths.get(path.toUri())).count()));
-                // Send the HTTPS PUT message containing the JSON data to the AS
-                PUT = "PUT /ContentServer/weather.json HTTP/1.1" + "\n"; // first line, doesn't change
+                PUT = "PUT /ContentServer/weather.json HTTP/1.1" + "\n";
                 PUT += "Host: " + HOST + "\n";
                 PUT += "User-Agent: ATOMClient/1/0" + "\n";
                 PUT += "Content-Type: weather/json" + "\n"; // stationID
                 PUT += "Content-Length: " + length + "\n" + " " + "\n";
-                // copy the JSON file over
-                PUT += (Files.readString(path));
+                PUT += (Files.readString(path)); // Copies the JSON file over
             } else {
-                // file doesn't exist
-                System.out.println("Error - Failed to read JSON file into the PUT message: ");
+                System.out.println("Error - local weather.json couldn't be retrieved.");
                 clock.updateTime();
                 return;
             }
@@ -136,54 +177,51 @@ public class ContentServer implements Serializable {
             return;
         }
 
-        // send the PUT message
         try {
-            // add timestamp first
             clock.updateTime();
-            PUT = (clock.getTime() + "\n" + PUT);
-            outstream.writeObject(PUT);
+            PUT = (clock.getTime() + "\n" + PUT); // Add the timestamp to top of the message
+            outstream.writeObject(PUT); // Send entire PUT message through the stream (serialised)
             outstream.flush();
         } catch (IOException ie) {
             System.out.println("Failed to send PUT message to Aggregation Server: " + ie.getMessage());
+            System.out.println("Please PUT again"); // Lets the user decide if they wish to retry
             return;
         }
 
-        // Check for confirmation (thumbs up) from AS
         String received = "";
-        while (true) {
+        while (true) { // While loop checks for confirmation that PUT succeeded
             try {
                 if (((received = (String) reader.readObject()) != null) && !(received.isEmpty())) {
                     String[] status = received.split(System.lineSeparator());
-                    int receivedTime = Integer.parseInt(status[0]); // first line is timestamp
-                    if (status[1].equals("500")) {
-                        System.out.println("500 - Internal server error" + "\n");
+                    int receivedTime = Integer.parseInt(status[0]); // receivedTime = Aggregation Server local time
+                    if (status[1].equals("500")) { // Check status message received
+                        System.out.println("500 - Internal server error" + "\n"); // Content doesn't make sense
                         clock.processEvent(receivedTime);
-                        return; // unsuccessful put, so return
-                    } else if (status[1].equals("204")) { // for potential errors?
+                        return;
+                    } else if (status[1].equals("204")) { // 204 if this server sent empty content
                         System.out.println("204 - No content was received" + "\n");
                         clock.processEvent(receivedTime);
-                        return; // return because it wasn't successful
-                    } else if (status[1].equals("400")) {
+                        return;
+                    } else if (status[1].equals("400")) { // Some other status
                         System.out.println("400");
                         clock.processEvent(receivedTime);
                         return;
-                    } else if (status[1].equals("201")) {
+                    } else if (status[1].equals("201")) { // New file was created
                         System.out.println("201 - HTTP_CREATED" + "\n");
                         clock.processEvent(receivedTime);
                         return;
-                    } else if (status[1].equals("200")) {
+                    } else if (status[1].equals("200")) { // Standard successful upload
                         System.out.println("200 - Request successful" + "\n");
                         clock.processEvent(receivedTime);
                         return;
-                    } else {
-                        // ignore other messages
+                    } else { // Any other message sent back is not recognised
                         System.out.println("Unidentifiable response from the aggregation server");
                         clock.processEvent(receivedTime);
                         return;
                     }
                 }
             } catch (IOException | ClassNotFoundException e) {
-                if (e.getMessage().equals("invalid type code: AC")) { // if error suggests the stream is empty
+                if (e.getMessage().equals("invalid type code: AC")) { // For handling potential stream errors due to empty message
                     System.out.println(e.getMessage());
                     clock.updateTime();
                     continue;
