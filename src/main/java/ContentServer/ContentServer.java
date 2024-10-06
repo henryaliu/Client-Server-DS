@@ -2,6 +2,7 @@ package ContentServer;
 
 import JSONParser.JSONParser;
 import lamport.LamportClock;
+
 import java.io.*;
 import java.lang.management.ManagementFactory;
 import java.net.Socket;
@@ -9,10 +10,8 @@ import java.net.SocketException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Scanner;
-import java.util.UUID;
 
 public class ContentServer implements Serializable {
     // Provides a universal serialisation ID across all servers/entities
@@ -38,6 +37,8 @@ public class ContentServer implements Serializable {
 
     private Socket csSocket;
     private JSONParser parser;
+
+    private String fileFolder = "ContentServer/";
 
     // Gets the URL from the user
     // Extracts the server name and port number
@@ -81,6 +82,46 @@ public class ContentServer implements Serializable {
         clock.updateTime(); // *** Update when server is allowed to start with valid URL data
     }
 
+    // For testing purposes
+    public Socket getCSSocket() {
+        return csSocket;
+    }
+
+    // For testing purposes
+    public String getID() {
+        return stationID;
+    }
+
+    // For integration testing purposes to avoid needing terminal inputs
+    public void setServer(String server, Integer port) {
+        this.serverName = server;
+        this.port = port;
+    }
+
+    // For testing purposes
+    public void setEntryLoc(String location) {
+        this.inputFileLoc = location;
+    }
+
+    // For testing purposes
+    public void setFileFolder(String folder_location) {
+        this.fileFolder = folder_location;
+    }
+
+    public void setHost(String inputHost) {
+        this.HOST = inputHost;
+    }
+
+    // For testing purposes
+    public ObjectOutputStream getOutputStream() {
+        return this.outstream;
+    }
+
+    // For testing purposes
+    public ObjectInputStream getInputStream() {
+        return this.reader;
+    }
+
     // Begins the Content Server operations:
     // Connects to the AggregationServer and then continuously listens for user prompts to END the server operations
     // Retries on server unavailable error or socket connection error (Limit: 10 automatic attempts)
@@ -90,8 +131,9 @@ public class ContentServer implements Serializable {
 
         clock = new LamportClock();
         fileData = new HashMap<String, String>();
+    }
 
-        getParameters();
+    public void beginOperation() {
         int attempts = 0;
         while (attempts != 11) { // Retry on error loop (Limit: 10 attempts)
             try {
@@ -125,7 +167,7 @@ public class ContentServer implements Serializable {
             while (true) {
                 currLine = scanner.nextLine();
                 if (currLine.equals("PUT")) {
-                    sendPUT(port);
+                    sendPUT();
                 } else if (currLine.equals("END")) { // If the user types END, all live variables are shut down. Server ends.
                     csSocket.shutdownInput();
                     csSocket.shutdownOutput();
@@ -152,15 +194,15 @@ public class ContentServer implements Serializable {
     // Sends the PUT message to the socket the server is connected to (Aggregation Server)
     // Retrieves the entry file, parses it to JSON String, serialises it and sends to server,
     // and waits for confirmation that the data uploaded successfully.
-    public void sendPUT(Integer port) {
+    public void sendPUT() {
         JSONParser jp = new JSONParser(); // Custom JSON Parser (see JSONParser folder)
-        jp.textToJSON(inputFileLoc, "ContentServer/weather.json"); // Parse the entry file to local weather.json file
-        Path path = Paths.get("ContentServer/weather.json");
+        jp.textToJSON(inputFileLoc,  fileFolder + "weather.json"); // Parse the entry file to local weather.json file
+        Path path = Paths.get(fileFolder + "weather.json");
         String PUT = "";
         try {
             if (Files.exists(path) && (Files.size(path) > 0)) {
                 long length = ((Files.lines(Paths.get(path.toUri())).count()));
-                PUT = "PUT /ContentServer/weather.json HTTP/1.1" + "\n";
+                PUT = "PUT /" + fileFolder + "/weather.json HTTP/1.1" + "\n";
                 PUT += "Host: " + HOST + "\n";
                 PUT += "User-Agent: ATOMClient/1/0" + "\n";
                 PUT += "Content-Type: weather/json" + "\n"; // stationID
@@ -235,6 +277,8 @@ public class ContentServer implements Serializable {
 
     public static void main(String[] args) {
         ContentServer cs = new ContentServer();
+        cs.getParameters();
+        cs.beginOperation();
     }
 
 }

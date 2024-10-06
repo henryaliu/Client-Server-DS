@@ -19,7 +19,7 @@ public class GETClient implements Serializable {
     private String AS_URL;
     private String serverName;
     private Integer port;
-    private String stationID;
+    private String stationID; // StationID of the ContentServer
 
     private ObjectOutputStream output;
     private ObjectInputStream input;
@@ -27,10 +27,28 @@ public class GETClient implements Serializable {
     private Socket clientSocket;
 
     private String JSON; // The latest data (in JSON format) received from the Aggregation Server
-    private String receivedData; // The latest data received from the Aggregation Server
 
+    // For testing purposes
+    public void setInfo(String url, Integer inputPort, String ID) {
+        this.AS_URL = url;
+        this.port = inputPort;
+        this.stationID = ID;
+        return;
+    }
+
+    // For testing purposes
+    public ObjectInputStream getInputStream() {
+        return this.input;
+    }
+
+    // Constructor instantiates Lamport Clock
     public GETClient() {
         clock = new LamportClock();
+    }
+
+    // For testing purposes
+    public String getReceivedJSON() {
+        return this.JSON;
     }
 
     // Gets the server name, port number, and stationID if there is one
@@ -100,7 +118,6 @@ public class GETClient implements Serializable {
             clock.updateTime(); // Update clock after exception caught
             return;
         }
-
         while (true) {  // Waiting to receive the requested data (JSON string) from the AS
             try {
                 if (((JSON = (String) input.readObject()) != null) && !(JSON.isEmpty())) {
