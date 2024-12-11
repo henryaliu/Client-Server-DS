@@ -5,7 +5,6 @@ import java.util.HashMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class JSONParser {
-
     private ConcurrentHashMap<String, String> feedTypes = new ConcurrentHashMap<String, String>();
 
     // Add feed types for checking validity later

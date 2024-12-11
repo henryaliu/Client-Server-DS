@@ -653,7 +653,6 @@ public class AggregationServer implements Serializable {
             if (!(newEntries.isEmpty())) {
                 currentWeatherData.putAll(newEntries); // Adds entries that haven't been added before
             }
-
             for (ConcurrentHashMap.Entry<String, String> curr_entry : currentWeatherData.entrySet()) {
                 pw.println(curr_entry.getKey() + ":" + curr_entry.getValue()); // Reprint the file data with the new version
             }

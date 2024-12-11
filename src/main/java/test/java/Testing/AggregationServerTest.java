@@ -240,7 +240,7 @@ class AggregationServerTest {
         AggregationServer as = new AggregationServer();
         as.setDirectory("src/main/java/AggregationServer/");
         as.setPort("4567");
-
+        
         as.beginOperation();
         int numFiles = 20;
         try {

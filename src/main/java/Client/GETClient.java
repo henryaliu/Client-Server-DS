@@ -131,7 +131,6 @@ public class GETClient implements Serializable {
                             System.out.println("Error: This request was not recognised");
                             return;
                         }
-
                         JSON = "";
                         for (int i = 1; i < lines.length; ++i) { // Ignores first line as it is the timestamp
                             JSON += lines[i];
