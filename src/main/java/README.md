@@ -1,7 +1,7 @@
 Welcome to my Assignment 2
 
 ----------------------------------------------------
-*** IMPORTANT *** - Please arrange the files under the following folders:
+*** IMPORTANT *** - Please arrange the files under the following folders for this to work:
 src
     main
         java
@@ -31,9 +31,12 @@ src
 
 ---------------------------------------------
 
+PLEASE EMAIL ME IF YOU HAVE TROUBLE AND I WILL SEND MY GITHUB
+
 *** HOW TO RUN THE PROGRAM ***
-1. Make sure you install all folders (AggregationServer, Client, ContentServer, JSONParser, lamport, Testing)
-2. Ensure the folders are under java folder
+1. Make sure you create folders for each class:
+(AggregationServer, Client, ContentServer, JSONParser, lamport, Testing (needs JUnit to work))
+2. Please ensure you are in the java directory (src -> main -> java) but not in any specific folder after that.
 3. Open a designated terminal for the AggregationServer folder, change your directory until you are in java folder, where
 you can see all the different folders listed above (packages)
 4. Repeat step 3 for every Content Server and GETClient that you wish to make (i.e. new terminal for each)

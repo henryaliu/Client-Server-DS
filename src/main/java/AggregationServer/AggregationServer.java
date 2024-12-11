@@ -118,7 +118,7 @@ public class AggregationServer implements Serializable {
         return;
     }
 
-    // Constructor: initialises Lamport clock, determine the server port, establishes ServerSocket, cleans weather file
+    // Constructor: initialises Lamport clock, cleans weather file
     // Not threaded: runs only once at the beginning to prepare the server
     public AggregationServer() {
         clock = new LamportClock();
@@ -137,6 +137,7 @@ public class AggregationServer implements Serializable {
         }
     }
 
+    // Begins the server operation by establishing the server socket. Automatically retries up to 5 times
     public void beginOperation() {
         int attempts = 0;
         while (attempts <= 6) { // Allow the server 5 attempts to retry creating a ServerSocket
@@ -255,7 +256,7 @@ public class AggregationServer implements Serializable {
     }
 
     // Threaded function (runs in background): Continuously loop through and check for requests sent by the provided socket
-    // Only called once per socket (when it is accepted by this server)
+    // Only called once for every socket (when it is accepted by this server)
     // If it detects a request from the socket's stream, it peeks the data for validity, and formats the data ready to be queued
     // socket = The socket the request was sent by, identity: the entity's ID
     public void listenForRequests(Socket socket, String identity) {
@@ -279,12 +280,12 @@ public class AggregationServer implements Serializable {
                             requestLines = wholeString.split(System.lineSeparator());
                         }
 
-                        firstLine = requestLines[0];
+                        firstLine = requestLines[0]; // Splits the first line into so that we can get PUT/GET (first word)
                         String[] firstLineWords = firstLine.split(" ", 3);
 
                         if (!firstLineWords[0].equals("PUT") && !firstLineWords[0].equals("GET")) { // Checks the first keyword is either PUT or GET
                             System.out.println("A request was received but was invalid (Not a PUT/GET)");
-                            // send back status 400
+                            // Sends back status 400
                             clock.updateTime();
                             ((ObjectOutputStream) objstreams.getFirst()).writeObject(clock.getTime() + "\n" + "400");
                             ((ObjectOutputStream) objstreams.getFirst()).flush();
