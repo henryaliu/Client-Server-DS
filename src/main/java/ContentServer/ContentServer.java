@@ -218,6 +218,7 @@ public class ContentServer implements Serializable {
             clock.updateTime();
             return;
         }
+
         try {
             clock.updateTime();
             PUT = (clock.getTime() + "\n" + PUT); // Add the timestamp to top of the message

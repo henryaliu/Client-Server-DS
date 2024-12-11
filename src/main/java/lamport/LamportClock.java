@@ -19,7 +19,6 @@ public class LamportClock {
         return time.updateAndGet(currentTime -> (Math.max(currentTime, receivedTime) + 1));
     }
 
-
     // Increments the time, and then returns the current time after the increment;
     public int updateTime() {
         return time.incrementAndGet(); // increase time by 1 unit

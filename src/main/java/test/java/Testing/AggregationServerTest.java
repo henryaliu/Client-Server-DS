@@ -25,7 +25,6 @@ import java.util.concurrent.Executors;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AggregationServerTest {
-
     @Test
     // For testing mechanism that picks up any files leftover from a crash from previous run.
     // Creates desired number of weather files, tests that they are all stored by server (Unit test)
@@ -240,7 +239,7 @@ class AggregationServerTest {
         AggregationServer as = new AggregationServer();
         as.setDirectory("src/main/java/AggregationServer/");
         as.setPort("4567");
-        
+
         as.beginOperation();
         int numFiles = 20;
         try {
